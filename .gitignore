@@ -1,0 +1,10 @@
+# local WSL test deps (installed via pip --target)
+.deps/
+
+# python
+__pycache__/
+*.pyc
+
+# tooling artifacts
+.playwright-mcp/
+.DS_Store

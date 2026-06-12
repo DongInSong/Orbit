@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbit</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='5' fill='%2322d3ee'/%3E%3Cellipse cx='16' cy='16' rx='13' ry='6' fill='none' stroke='%2322d3ee' stroke-width='1.5' opacity='.55' transform='rotate(-24 16 16)'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 32 32" width="22" height="22">
+      <circle cx="16" cy="16" r="5" fill="var(--cyan)"/>
+      <ellipse cx="16" cy="16" rx="13" ry="6" fill="none" stroke="var(--cyan)"
+               stroke-width="1.5" opacity=".5" transform="rotate(-24 16 16)"/>
+    </svg>
+    <h1>ORBIT</h1>
+    <span id="mode-badge" class="badge">…</span>
+    <span id="iface-label" class="dim"></span>
+  </div>
+  <div class="rates">
+    <div class="rate down"><span class="arrow">▼</span><b id="rate-down">0</b><i id="rate-down-u">bps</i></div>
+    <div class="rate up"><span class="arrow">▲</span><b id="rate-up">0</b><i id="rate-up-u">bps</i></div>
+    <div class="meta">
+      <span><em id="pps">0</em> pkt/s</span>
+      <span><em id="host-count">0</em> hosts</span>
+      <span>세션 <em id="total-session">0 B</em></span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section id="map-panel">
+    <canvas id="star-canvas"></canvas>
+    <canvas id="trail-canvas"></canvas>
+    <canvas id="node-canvas"></canvas>
+    <div id="legend"></div>
+    <div id="alert-strip"></div>
+    <div id="focus-card" hidden></div>
+    <div id="tooltip" hidden></div>
+  </section>
+
+  <aside id="side">
+    <section class="panel" id="hosts-panel">
+      <h2>ACTIVE HOSTS</h2>
+      <div id="host-list"></div>
+    </section>
+    <section class="panel" id="conn-panel">
+      <h2>CONNECTIONS</h2>
+      <div id="conn-list"></div>
+    </section>
+  </aside>
+</main>
+
+<footer id="chart-panel">
+  <canvas id="chart-canvas"></canvas>
+  <div class="chart-labels">
+    <span class="cl-down">▼ DOWN</span>
+    <span class="cl-up">▲ UP</span>
+    <span class="cl-scale" id="chart-scale"></span>
+  </div>
+</footer>
+
+<div id="toast"></div>
+
+<div id="overlay" class="connecting">
+  <div class="overlay-inner">
+    <svg viewBox="0 0 32 32" width="40" height="40" class="spin">
+      <circle cx="16" cy="16" r="5" fill="var(--cyan)"/>
+      <ellipse cx="16" cy="16" rx="13" ry="6" fill="none" stroke="var(--cyan)"
+               stroke-width="1.5" opacity=".5"/>
+    </svg>
+    <p>에이전트에 연결 중…</p>
+  </div>
+</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

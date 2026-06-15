@@ -426,7 +426,7 @@ class Aggregator:
                 elif len(self.dark_bytes) > 20000:
                     self.dark_bytes.clear()
 
-    def note_tcp(self, ip, port, direction, flags):
+    def note_tcp(self, lport, ip, port, direction, flags):
         """Track TCP handshakes to flag failed connections — an outbound SYN
         with no SYN-ACK (timeout, swept in snapshot) or answered by a RST
         (refused). LAN hosts count too (router/switch), so unlike scan/dark
@@ -437,6 +437,7 @@ class Aggregator:
         with self.lock:
             if direction == "up" and (flags & SYN) and not (flags & ACK):
                 self.syn_pending.setdefault(key, now)   # keep the first SYN's clock
+                self.tcp_hi.pop((lport, ip, port), None)   # new connection → fresh seq space
                 if len(self.syn_pending) > 20000:
                     self.syn_pending.clear()
             elif direction == "down" and (flags & SYN) and (flags & ACK):
@@ -501,12 +502,14 @@ class Aggregator:
         """True if 32-bit seq a is strictly before b (wraparound-safe)."""
         return 0 < ((b - a) & 0xFFFFFFFF) < 0x80000000
 
-    def note_tcp_seg(self, ip, rport, seq, plen):
-        """Outbound TCP DATA segment. Our own stack sends in order, so a seq that
-        re-covers already-sent data is a retransmission — a clean loss proxy.
-        Tracks a per-flow high-water mark + per-host/global counts."""
+    def note_tcp_seg(self, lport, ip, rport, seq, plen):
+        """Outbound TCP DATA segment. Keyed by the CONNECTION (local port + peer)
+        so independent connections to the same server — each with its own random
+        ISN — aren't mistaken for each other's retransmissions. On a given
+        connection our stack sends in order, so a seq that re-covers already-sent
+        data is a retransmit — a clean loss proxy. 32-bit wraparound-safe."""
         end = (seq + plen) & 0xFFFFFFFF
-        key = (ip, rport)
+        key = (lport, ip, rport)
         with self.lock:
             self.dseg += 1
             self.hosts[ip]["dseg"] += 1
@@ -728,11 +731,11 @@ def start_live_capture(agg, iface):
 
         # connection-health signals
         if tcp_flags is not None:
-            agg.note_tcp(remote, rport, direction, tcp_flags)
+            agg.note_tcp(lport, remote, rport, direction, tcp_flags)
             if direction == "up":
                 plen = len(pkt[TCP].payload)
                 if plen:
-                    agg.note_tcp_seg(remote, rport, pkt[TCP].seq, plen)
+                    agg.note_tcp_seg(lport, remote, rport, pkt[TCP].seq, plen)
         elif l4 == "icmp" and ICMP in pkt and pkt[ICMP].type == 3 \
                 and IPerror in pkt:   # 3 = dest-unreachable (11/TTL is normal traceroute)
             oport = pkt[TCPerror].dport if TCPerror in pkt else \

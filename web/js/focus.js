@@ -50,9 +50,9 @@ export function render(structure = false) {
         <span>▼ <b class="fc-down"></b></span><span>▲ <b class="fc-up"></b></span>
         <span>total ▼ <b class="fc-tdown"></b></span><span>total ▲ <b class="fc-tup"></b></span>
         <span>protocol <b>${h.proto.toUpperCase()}</b></span>
-        <span>${h.proc ? `process <b>${h.proc}</b>` : ""}</span>
-        <span>${h.cc ? `location <b><span class="flag">${flagEmoji(h.cc)}</span> ${h.country || h.cc}</b>` : ""}</span>
-        <span>${h.org ? `ASN <b>${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</b>` : ""}</span>
+        <span${h.proc ? ` title="${h.proc}"` : ""}>${h.proc ? `process <b>${h.proc}</b>` : ""}</span>
+        ${h.cc ? `<span class="fc-wide" title="${h.country || h.cc}">location <b><span class="flag">${flagEmoji(h.cc)}</span> ${h.country || h.cc}</b></span>` : ""}
+        ${h.org ? `<span class="fc-wide" title="AS${h.asn != null ? h.asn : "?"} ${h.org}">ASN <b>${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</b></span>` : ""}
       </div>
       ${ports.length ? `<div class="fc-ports">ports ${ports.map(p => `<em>${p}</em>`).join("")}</div>` : ""}
       <div class="fc-foot">

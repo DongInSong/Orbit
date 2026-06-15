@@ -266,12 +266,15 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 .fc-spark { display: block; width: 100%; height: 46px; margin-bottom: 8px; }
 .fc-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 3px 10px;
   font-size: 10px;
   color: var(--dim);
   margin-bottom: 7px;
 }
+/* one line per field; long values truncate with … instead of wrapping */
+.fc-grid span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fc-grid .fc-wide { grid-column: 1 / -1; }   /* free-text rows get the full width */
 .fc-grid b { color: var(--text); font-weight: 400; font-variant-numeric: tabular-nums; }
 .fc-ports { font-size: 10px; color: var(--dim); margin-bottom: 7px; line-height: 1.8; }
 .fc-ports em {

@@ -37,6 +37,10 @@ function hostRecord(ip, name) {
     emaUp: 0,
     proto: "other",
     proc: null,
+    cc: null,                                    // ISO-2 country (DB-IP)
+    country: null,                               // localized country name
+    asn: null,                                   // autonomous system number
+    org: null,                                   // AS organization name
     lastSeen: 0,
     glow: 0,                                     // activity flash, decays per frame
     firstSeen: Date.now(),
@@ -82,6 +86,10 @@ export function applyTick(tick) {
     }
     if (th.name) h.name = th.name;
     else if (!h.name && state.names.has(th.ip)) h.name = state.names.get(th.ip);
+    if (th.cc) h.cc = th.cc;
+    if (th.country) h.country = th.country;
+    if (th.asn != null) h.asn = th.asn;          // keep AS0 distinct from absent
+    if (th.org) h.org = th.org;
     h.emaDown += ((th.down * 10) - h.emaDown) * EMA_A;
     h.emaUp += ((th.up * 10) - h.emaUp) * EMA_A;
     h.proto = th.proto;

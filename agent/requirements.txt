@@ -1,2 +1,3 @@
 aiohttp>=3.9
 scapy>=2.5
+maxminddb>=2.5

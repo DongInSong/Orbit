@@ -11,15 +11,22 @@ copy-only, DNS names come from passively observed responses.
 
 import argparse
 import asyncio
+import gzip
 import json
 import math
+import os
 import random
+import shutil
 import socket
+import subprocess
 import sys
+import tempfile
 import threading
 import time
+import urllib.request
 import webbrowser
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".deps"))
@@ -45,6 +52,12 @@ SCAN_PORTS = 12          # within SCAN_WINDOW seconds triggers an alert
 SCAN_COOLDOWN = 60.0
 DARK_BYTES = 5 * 1024 * 1024   # unnamed public host exceeding this → alert
 
+# ----------------------------------------------------------------------- geoip
+GEO_DIR = Path(__file__).resolve().parent.parent / ".geoip"
+GEO_MAX_AGE = 40 * 86400       # re-download a cached build once it is older
+GEO_CACHE_MAX = 50000
+DBIP_BASE = "https://download.db-ip.com/free"
+
 
 def _is_private(ip):
     import ipaddress
@@ -52,6 +65,164 @@ def _is_private(ip):
         return ipaddress.ip_address(ip).is_private
     except ValueError:
         return True
+
+
+# --------------------------------------------------------- geoip + asn (DB-IP)
+
+def _month_candidates(n=3):
+    """Current YYYY-MM first, then earlier months. DB-IP publishes a new Lite
+    build early each month and the current one may not be up yet, so we fall
+    back a couple of months rather than failing."""
+    y, m = date.today().year, date.today().month
+    out = []
+    for _ in range(n):
+        out.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    return out
+
+
+class GeoDB:
+    """Offline GeoIP + ASN enrichment from DB-IP Lite (CC BY 4.0).
+
+    Loads cached .mmdb files if present; otherwise a daemon thread downloads
+    them once (gzip → atomic replace) and enrichment activates when ready.
+    Lookups are 100% local — no per-IP network access, ever. If the one-time
+    download fails (offline), enrichment simply stays off; there is no retry
+    storm and capture is never affected."""
+
+    def __init__(self):
+        self._country = None     # maxminddb readers, published atomically
+        self._asn = None
+        self._cache = {}         # ip -> {cc,country,asn,org} | {} (miss/private)
+        self._lock = threading.Lock()
+
+    def start(self):
+        threading.Thread(target=self._bootstrap, daemon=True).start()
+        return self
+
+    def lookup(self, ip):
+        """Local-only lookup. Runs on the asyncio thread; never under agg.lock."""
+        country, asn = self._country, self._asn
+        if country is None and asn is None:
+            return None
+        hit = self._cache.get(ip)
+        if hit is not None:
+            return hit or None       # {} sentinel → private/miss, cached
+        if _is_private(ip):
+            self._cache[ip] = {}
+            return None
+        out = {}
+        try:
+            if country is not None:
+                r = country.get(ip)
+                if r:
+                    co = r.get("country") or {}
+                    if co.get("iso_code"):
+                        out["cc"] = co["iso_code"]
+                    names = co.get("names") or {}
+                    nm = names.get("ko") or names.get("en")
+                    if nm:
+                        out["country"] = nm
+            if asn is not None:
+                r = asn.get(ip)
+                if r:
+                    n = r.get("autonomous_system_number")
+                    if n is not None:
+                        out["asn"] = n
+                    org = r.get("autonomous_system_organization")
+                    if org:
+                        out["org"] = org
+        except (ValueError, KeyError):
+            out = {}
+        if len(self._cache) > GEO_CACHE_MAX:
+            self._cache = {}         # atomic rebind — safe vs the bootstrap thread
+        self._cache[ip] = out
+        return out or None
+
+    def enrich(self, snap):
+        """Add cc/country/asn/org to each host and conn dict of a snapshot.
+        Called from the tick loop AFTER snapshot() returns — the dicts are
+        already detached from the live aggregator, so no lock is held."""
+        if self._country is None and self._asn is None:
+            return
+        for rec in snap.get("hosts", ()):
+            g = self.lookup(rec["ip"])
+            if g:
+                rec.update(g)
+        for rec in snap.get("conns", ()):
+            g = self.lookup(rec["ip"])
+            if g:
+                rec.update(g)
+
+    # ---- bootstrap / one-time download (daemon thread) ---------------------
+
+    def _bootstrap(self):
+        try:
+            import maxminddb
+        except Exception:
+            return                   # dep missing → enrichment stays off
+        try:
+            GEO_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return
+        cpath = self._ensure("dbip-country-lite")
+        apath = self._ensure("dbip-asn-lite")
+        country = asn = None
+        try:
+            if cpath:
+                country = maxminddb.open_database(str(cpath), maxminddb.MODE_MEMORY)
+        except Exception:
+            country = None
+        try:
+            if apath:
+                asn = maxminddb.open_database(str(apath), maxminddb.MODE_MEMORY)
+        except Exception:
+            asn = None
+        with self._lock:
+            self._country, self._asn = country, asn
+            self._cache = {}
+
+    def _ensure(self, slug):
+        """Return a path to a usable .mmdb for slug, downloading if needed."""
+        existing = sorted(GEO_DIR.glob(f"{slug}-*.mmdb"))
+        newest = existing[-1] if existing else None
+        if newest is not None:
+            try:
+                if time.time() - newest.stat().st_mtime < GEO_MAX_AGE:
+                    return newest
+            except OSError:
+                pass
+        got = self._download(slug)
+        if got is None:
+            return newest            # fall back to a stale copy if we have one
+        for old in existing:
+            if old != got:
+                try:
+                    old.unlink()
+                except OSError:
+                    pass
+        return got
+
+    def _download(self, slug):
+        for ym in _month_candidates():
+            dest = GEO_DIR / f"{slug}-{ym}.mmdb"
+            if dest.exists():
+                return dest
+            url = f"{DBIP_BASE}/{slug}-{ym}.mmdb.gz"
+            try:
+                print(f"  ◉ GeoIP: {slug} {ym} 내려받는 중…", flush=True)
+                req = urllib.request.Request(url, headers={"User-Agent": "orbit"})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    raw = gzip.decompress(resp.read())
+                tmp = dest.with_name(dest.name + ".part")
+                tmp.write_bytes(raw)
+                os.replace(tmp, dest)
+                return dest
+            except Exception:
+                continue             # try the previous month, then give up
+        return None
 
 
 # ------------------------------------------------- process attribution (win)
@@ -232,6 +403,10 @@ class Aggregator:
                     mb = self.dark_bytes[ip] / 1048576
                     self.alerts.append({"type": "dark", "ip": ip,
                                         "detail": f"DNS 이름 없이 {mb:.1f} MB"})
+                # bound the accumulator like the other long-lived maps — a lossy
+                # link churns through many distinct public IPs otherwise
+                elif len(self.dark_bytes) > 20000:
+                    self.dark_bytes.clear()
 
     def _check_scan(self, ip, port, now):
         if self._private(ip):
@@ -318,6 +493,39 @@ def classify(sport, dport, l4):
     return l4
 
 
+def _resolve_iface(iface):
+    """Pick the capture interface. An explicit --iface always wins. Otherwise
+    bind to the interface that owns the default route — i.e. the one actually
+    online — which is more reliable than scapy's global default when several
+    adapters exist (e.g. a still-enabled Ethernet port lingering after you
+    switch to Wi-Fi)."""
+    if iface:
+        return iface
+    try:
+        from scapy.all import conf
+        dev, _, _ = conf.route.route("0.0.0.0")
+        return dev or conf.iface
+    except Exception:
+        return None      # let scapy fall back to its own default
+
+
+def list_ifaces():
+    from scapy.all import conf
+    print("\n  Capture interfaces — use the NAME with --iface:\n")
+    try:
+        conf.ifaces.show()
+    except Exception:
+        from scapy.all import get_if_list
+        for n in get_if_list():
+            print("   ", n)
+    try:
+        dev, _, _ = conf.route.route("0.0.0.0")
+        print(f"\n  default route → {dev}")
+    except Exception:
+        pass
+    print()
+
+
 def start_live_capture(agg, iface):
     from scapy.all import AsyncSniffer, DNS, ICMP, IP, IPv6, TCP, UDP  # noqa: lazy
     try:
@@ -325,6 +533,7 @@ def start_live_capture(agg, iface):
     except ImportError:
         pass
 
+    iface = _resolve_iface(iface)
     local = local_ip_set()
     procmap = ProcessMap().start()
 
@@ -375,7 +584,7 @@ def start_live_capture(agg, iface):
     sniffer = AsyncSniffer(prn=handle, store=False, filter="ip or ip6",
                            iface=iface or None)
     sniffer.start()
-    return sniffer
+    return iface          # the interface actually being captured on
 
 
 # ----------------------------------------------------------------- demo mode
@@ -476,6 +685,8 @@ async def ws_handler(request):
     await ws.send_json({"type": "hello", "mode": app["mode"],
                         "iface": app["iface"] or "default"})
     app["clients"].add(ws)
+    if app["mode"] == "replay":
+        app["replay_restart"] = True   # rewind so the new viewer sees frame 0
     try:
         async for msg in ws:
             if msg.type == WSMsgType.ERROR:
@@ -489,15 +700,150 @@ async def index_handler(_):
     return web.FileResponse(WEB_DIR / "index.html")
 
 
+@web.middleware
+async def no_cache(request, handler):
+    """Localhost dev tool — never serve a stale frontend from browser cache.
+    no-cache makes the browser revalidate via ETag every load (304 when the
+    file is unchanged, so it stays fast)."""
+    resp = await handler(request)
+    if not resp.prepared:        # skip the already-sent WebSocket response
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+# --------------------------------------------------------------- record / replay
+
+REC_VERSION = 1
+REC_CLAMP_HI = 1.0       # cap replay inter-tick delay so long gaps don't stall
+
+
+class TickRecorder:
+    """Appends each emitted (already geo-enriched) tick to a JSONL file: a
+    header line first, then one compact tick per line. Append-only and line
+    buffered, so a crash loses at most the final partial line, which the
+    replayer tolerates. No fsync — that would stall the event loop."""
+
+    def __init__(self, path, mode, iface):
+        self.path = path
+        self.f = open(path, "a", buffering=1, encoding="utf-8")
+        header = {"orbit": "rec", "v": REC_VERSION, "mode": mode,
+                  "iface": iface, "started": int(time.time() * 1000)}
+        self.f.write(json.dumps(header, separators=(",", ":")) + "\n")
+
+    def write(self, line):
+        self.f.write(line + "\n")
+
+    def close(self):
+        try:
+            self.f.close()
+        except OSError:
+            pass
+
+
+def _read_rec_header(f):
+    """Return (header_dict, first_data_line_or_None). A leading {"orbit":"rec"}
+    line is the header; anything else is treated as the first data tick so a
+    headerless file still replays fully."""
+    line = f.readline()
+    if not line:
+        return {}, None
+    s = line.strip()
+    try:
+        obj = json.loads(s)
+    except ValueError:
+        return {}, None
+    if isinstance(obj, dict) and obj.get("orbit") == "rec":
+        return obj, None
+    return {}, s
+
+
+def _iter_ticks(f, first=None):
+    if first:
+        try:
+            yield json.loads(first)
+        except ValueError:
+            pass
+    for line in f:
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            yield json.loads(s)
+        except ValueError:
+            if not line.endswith("\n"):
+                return            # truncated final line (crash during record)
+            continue              # corrupt middle line — skip, keep neighbours
+
+
+async def _play_once(app):
+    """Stream the recording once, paced by the recorded 't' deltas. Aborts
+    early (returning the count so far) if a viewer joins/leaves."""
+    clients = app["clients"]
+    try:
+        f = open(app["replay"], encoding="utf-8")
+    except OSError:
+        await asyncio.sleep(0.5)
+        return 0
+    n = 0
+    prev_t = None
+    with f:
+        _, first = _read_rec_header(f)
+        for tick in _iter_ticks(f, first):
+            if app["replay_restart"] or not clients:
+                return n
+            t = tick.get("t")
+            delay = TICK_SEC
+            if prev_t is not None and isinstance(t, (int, float)):
+                d = (t - prev_t) / 1000.0
+                delay = d if 0.0 <= d <= REC_CLAMP_HI else TICK_SEC
+            if isinstance(t, (int, float)):
+                prev_t = t
+            await asyncio.sleep(delay)
+            payload = json.dumps({"type": "tick", **tick}, separators=(",", ":"))
+            for ws in list(clients):
+                try:
+                    await ws.send_str(payload)
+                except (ConnectionResetError, RuntimeError):
+                    clients.discard(ws)
+            n += 1
+    return n
+
+
+async def replay_loop(app):
+    clients = app["clients"]
+    while True:
+        if not clients:
+            await asyncio.sleep(0.2)
+            continue
+        app["replay_restart"] = False
+        emitted = await _play_once(app)
+        if app["replay_restart"]:
+            continue                      # a new viewer joined → restart at 0
+        if app["loop"] and emitted:
+            await asyncio.sleep(0.5)       # brief gap, then loop
+            continue
+        # reached the end (or empty/corrupt file): hold here until a viewer
+        # reconnects — the sleep floor guarantees we never busy-spin
+        while clients and not app["replay_restart"]:
+            await asyncio.sleep(0.3)
+
+
 async def tick_loop(app):
-    agg, clients = app["agg"], app["clients"]
+    agg, clients, geo = app["agg"], app["clients"], app["geo"]
+    rec = app["recorder"]
     while True:
         await asyncio.sleep(TICK_SEC)
-        if not clients:
+        if not clients and rec is None:
             agg.snapshot()  # keep windows bounded even with no viewers
             continue
-        payload = json.dumps({"type": "tick", **agg.snapshot()},
-                             separators=(",", ":"))
+        snap = agg.snapshot()
+        if geo is not None:
+            geo.enrich(snap)            # geo fields added outside agg.lock
+        if rec is not None:
+            rec.write(json.dumps(snap, separators=(",", ":")))
+        if not clients:
+            continue
+        payload = json.dumps({"type": "tick", **snap}, separators=(",", ":"))
         dead = []
         for ws in clients:
             try:
@@ -509,9 +855,57 @@ async def tick_loop(app):
 
 
 async def on_startup(app):
+    if app["mode"] == "replay":
+        app["replay_task"] = asyncio.create_task(replay_loop(app))
+        return
     app["tick_task"] = asyncio.create_task(tick_loop(app))
     if app["mode"] == "demo":
         app["demo_task"] = asyncio.create_task(run_demo(app["agg"]))
+
+
+async def on_cleanup(app):
+    rec = app["recorder"]
+    if rec is not None:
+        rec.close()
+
+
+# --------------------------------------------------------------- browser launch
+
+# Edge ships with every modern Windows; Chrome covers the rest. %VARS% that
+# don't resolve are left intact by expandvars and filtered out below.
+CHROMIUM_CANDIDATES = (
+    r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe",
+    r"%ProgramFiles%\Google\Chrome\Application\chrome.exe",
+    r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe",
+    r"%LocalAppData%\Google\Chrome\Application\chrome.exe",
+)
+
+
+def open_app(url, port):
+    """Open the UI in a chromeless app window (no tabs/address bar) via a
+    Chromium browser's --app mode. Falls back to the default browser."""
+    exe = None
+    for cand in CHROMIUM_CANDIDATES:
+        path = os.path.expandvars(cand)
+        if "%" not in path and os.path.exists(path):
+            exe = path
+            break
+    if exe is None:   # PATH lookup for non-Windows / portable installs
+        for name in ("chrome", "google-chrome", "chromium", "chromium-browser", "msedge"):
+            if (exe := shutil.which(name)):
+                break
+    if exe is None:
+        webbrowser.open(url)
+        return
+    # dedicated profile → reliably opens its own window even if the browser is
+    # already running, and remembers this app window's size/position
+    profile = Path(tempfile.gettempdir()) / f"orbit-app-{port}"
+    try:
+        subprocess.Popen([exe, f"--app={url}", f"--user-data-dir={profile}",
+                          "--no-first-run", "--no-default-browser-check"])
+    except OSError:
+        webbrowser.open(url)
 
 
 def main():
@@ -521,37 +915,75 @@ def main():
     ap.add_argument("--iface", default=None, help="capture interface name")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--record", nargs="?", const="", default=None, metavar="FILE",
+                    help="record every tick to a .jsonl session file")
+    ap.add_argument("--replay", default=None, metavar="FILE",
+                    help="replay a recorded .jsonl session (no capture/admin)")
+    ap.add_argument("--loop", action="store_true",
+                    help="loop the replay when it reaches the end")
+    ap.add_argument("--list-ifaces", action="store_true",
+                    help="list capture interfaces and exit")
     args = ap.parse_args()
 
-    mode = "demo" if args.demo else "live"
+    if args.list_ifaces:
+        list_ifaces()
+        return
+
+    mode = "replay" if args.replay else "demo" if args.demo else "live"
     # demo lowers the dark-traffic bar so the alert shows up within ~20s
     agg = Aggregator(dark_threshold=1_500_000 if args.demo else DARK_BYTES)
+    geo = None
 
-    if mode == "live":
-        try:
-            start_live_capture(agg, args.iface)
-        except Exception as e:
-            print(f"\n  [!] 캡처 시작 실패: {e}")
-            print("      Npcap이 설치되어 있는지, 관리자 권한으로 실행했는지 확인하세요.")
-            print("      Npcap: https://npcap.com  (설치 시 'WinPcap API-compatible mode' 체크)")
-            print("      캡처 없이 화면만 보려면: python orbit_agent.py --demo\n")
+    if mode == "replay":
+        if not os.path.exists(args.replay):
+            print(f"\n  [!] 리플레이 파일을 찾을 수 없습니다: {args.replay}\n")
             sys.exit(1)
+        iface = os.path.basename(args.replay)
+    else:
+        iface = args.iface
+        geo = GeoDB().start()        # offline GeoIP/ASN; downloads once if needed
+        if mode == "live":
+            try:
+                iface = str(start_live_capture(agg, args.iface) or args.iface or "default")
+            except Exception as e:
+                print(f"\n  [!] 캡처 시작 실패: {e}")
+                print("      Npcap이 설치되어 있는지, 관리자 권한으로 실행했는지 확인하세요.")
+                print("      Npcap: https://npcap.com  (설치 시 'WinPcap API-compatible mode' 체크)")
+                print("      캡처 없이 화면만 보려면: python orbit_agent.py --demo\n")
+                sys.exit(1)
 
-    app = web.Application()
+    recorder = None
+    if args.record is not None and mode != "replay":
+        path = args.record or f"orbit-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
+        try:
+            recorder = TickRecorder(path, mode, iface)
+            print(f"  ◉ recording → {path}")
+        except OSError as e:
+            print(f"  [!] 기록 파일 열기 실패: {e}")
+
+    app = web.Application(middlewares=[no_cache])
     app["agg"] = agg
     app["clients"] = set()
     app["mode"] = mode
-    app["iface"] = args.iface
+    app["iface"] = iface
+    app["geo"] = geo
+    app["recorder"] = recorder
+    app["replay"] = args.replay
+    app["loop"] = args.loop
+    app["replay_restart"] = False
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/", WEB_DIR)
     app.on_startup.append(on_startup)
+    app.on_cleanup.append(on_cleanup)
 
     url = f"http://localhost:{args.port}"
     print(f"\n  ◉ Orbit  —  {mode.upper()} mode")
+    if mode == "live":
+        print(f"    capturing on: {iface}   (다른 어댑터면: --iface \"<name>\", 목록: --list-ifaces)")
     print(f"    {url}\n", flush=True)
     if not args.no_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: open_app(url, args.port)).start()
     web.run_app(app, host="127.0.0.1", port=args.port, print=None)
 
 

@@ -1,5 +1,5 @@
 import { state, topHosts, hostLabel } from "./state.js";
-import { protoColor, clamp, fmtRateStr } from "./util.js";
+import { protoColor, clamp, fmtRateStr, flagEmoji } from "./util.js";
 
 const MAX_PARTICLES = 650;
 const LABELED = 9;
@@ -410,11 +410,14 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
 export function tooltipHTML(h) {
   const name = h.name ? `<div class="tt-name">${h.name}</div>` : "";
   const proc = h.proc ? ` · ${h.proc}` : "";
+  const loc = h.cc ? `<div class="tt-geo"><span class="flag">${flagEmoji(h.cc)}</span> ${h.cc}${h.country ? ` · ${h.country}` : ""}</div>` : "";
+  const org = h.org ? `<div class="tt-geo">${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</div>` : "";
   return `${name}<div class="tt-ip">${h.ip}</div>
     <div class="tt-rate">
       <span class="d">▼ <b>${fmtRateStr(h.emaDown)}</b></span> ·
       <span class="u">▲ <b>${fmtRateStr(h.emaUp)}</b></span>
     </div>
     <div class="tt-ip">${h.proto.toUpperCase()}${proc}</div>
+    ${loc}${org}
     <div class="tt-hint">클릭 IP 복사 · Shift+클릭 이름 · 우클릭 상세</div>`;
 }

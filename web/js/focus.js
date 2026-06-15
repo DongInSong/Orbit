@@ -1,5 +1,5 @@
 import { state } from "./state.js";
-import { protoColor, fmtRateStr, fmtBytes, timeHMS } from "./util.js";
+import { protoColor, fmtRateStr, fmtBytes, timeHMS, flagEmoji } from "./util.js";
 import { copyHost } from "./toast.js";
 
 const card = document.getElementById("focus-card");
@@ -51,6 +51,8 @@ export function render(structure = false) {
         <span>누적 ▼ <b class="fc-tdown"></b></span><span>누적 ▲ <b class="fc-tup"></b></span>
         <span>프로토콜 <b>${h.proto.toUpperCase()}</b></span>
         <span>${h.proc ? `프로세스 <b>${h.proc}</b>` : ""}</span>
+        <span>${h.cc ? `위치 <b><span class="flag">${flagEmoji(h.cc)}</span> ${h.country || h.cc}</b>` : ""}</span>
+        <span>${h.org ? `ASN <b>${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</b>` : ""}</span>
       </div>
       ${ports.length ? `<div class="fc-ports">포트 ${ports.map(p => `<em>${p}</em>`).join("")}</div>` : ""}
       <div class="fc-foot">

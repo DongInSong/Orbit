@@ -5,6 +5,12 @@
 __pycache__/
 *.pyc
 
+# geoip databases (downloaded from DB-IP on first run)
+.geoip/
+
+# recorded sessions
+orbit-*.jsonl
+
 # tooling artifacts
 .playwright-mcp/
 .DS_Store

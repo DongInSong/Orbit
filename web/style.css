@@ -1,3 +1,16 @@
+/* bundled Twemoji flag font (Twemoji, CC-BY 4.0) — restricted to the regional
+   indicator range so country flags render even on Windows, where the system
+   emoji font has no flag glyphs. Other text is unaffected. */
+@font-face {
+  font-family: "Twemoji Country Flags";
+  unicode-range: U+1F1E6-1F1FF;
+  src: url("TwemojiCountryFlags.woff2") format("woff2");
+}
+.flag {
+  font-family: "Twemoji Country Flags", var(--mono);
+  font-style: normal;
+}
+
 :root {
   --bg: #070a10;
   --bg2: #0a0f18;
@@ -75,6 +88,7 @@ h1 {
   animation: pulse 2.4s ease-in-out infinite;
 }
 .badge.demo { color: var(--amber); border-color: rgba(251, 191, 36, .4); }
+.badge.replay { color: var(--violet); border-color: rgba(167, 139, 250, .4); }
 @keyframes pulse { 50% { opacity: .55; } }
 
 .dim { color: var(--dim); font-size: 11px; }
@@ -95,7 +109,18 @@ h1 {
 .rate.up .arrow, .rate.up b { color: var(--amber); text-shadow: 0 0 14px rgba(251,191,36,.3); }
 
 .meta { display: flex; gap: 14px; color: var(--dim); font-size: 11px; }
-.meta em { font-style: normal; color: var(--text); font-variant-numeric: tabular-nums; }
+.meta em {
+  font-style: normal;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  /* reserve width per counter so the rate readouts to their left stay put
+     instead of sliding as these values gain/lose digits each tick */
+  display: inline-block;
+  text-align: right;
+}
+#pps { min-width: 56px; }
+#host-count { min-width: 26px; }
+#total-session { min-width: 62px; }
 
 /* ------------------------------------------------------------------ main */
 
@@ -125,6 +150,16 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 #legend span { display: flex; align-items: center; gap: 5px; }
 #legend i { width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
 
+#attribution {
+  position: absolute;
+  right: 12px; bottom: 10px;
+  z-index: 3;
+  font-size: 9px; letter-spacing: .03em;
+  color: var(--dimmer);
+  text-decoration: none;
+}
+#attribution:hover { color: var(--dim); }
+
 #tooltip {
   position: absolute;
   pointer-events: none;
@@ -140,6 +175,7 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 }
 #tooltip .tt-name { color: var(--text); font-weight: 600; }
 #tooltip .tt-ip { color: var(--dim); }
+#tooltip .tt-geo { color: var(--dim); }
 #tooltip .tt-rate b { font-weight: 400; }
 #tooltip .tt-rate .d { color: var(--cyan); }
 #tooltip .tt-rate .u { color: var(--amber); }
@@ -301,6 +337,7 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 .host-row .h-dot { width: 7px; height: 7px; border-radius: 50%; box-shadow: 0 0 7px currentColor; }
 .host-row .h-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .host-row .h-name small { color: var(--dim); font-size: 10px; margin-left: 6px; }
+.host-row .h-name .h-flag { margin-right: 5px; font-size: 12px; vertical-align: -1px; }
 .host-row .h-rate { font-size: 10px; color: var(--dim); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .host-row .h-rate .d { color: var(--cyan); }
 .host-row .h-rate .u { color: var(--amber); }

@@ -49,6 +49,17 @@ export function clamp(v, lo, hi) {
   return v < lo ? lo : v > hi ? hi : v;
 }
 
+/* 2-letter country code -> flag emoji (regional indicator pair). Rendered via
+   the bundled Twemoji flag font so it shows on Windows too. "" if invalid. */
+export function flagEmoji(cc) {
+  if (typeof cc !== "string" || cc.length !== 2) return "";
+  const A = "A".charCodeAt(0);
+  const a = cc.toUpperCase().charCodeAt(0) - A;
+  const b = cc.toUpperCase().charCodeAt(1) - A;
+  if (a < 0 || a > 25 || b < 0 || b > 25) return "";
+  return String.fromCodePoint(0x1f1e6 + a) + String.fromCodePoint(0x1f1e6 + b);
+}
+
 export function timeHMS(ms) {
   return new Date(ms).toTimeString().slice(0, 8);
 }

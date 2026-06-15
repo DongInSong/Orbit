@@ -35,12 +35,16 @@ function connect() {
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type === "hello") {
-      state.mode = msg.mode;
+      const mode = msg.mode || "live";
+      state.mode = mode;
       state.iface = msg.iface;
       const badge = $("mode-badge");
-      badge.textContent = msg.mode.toUpperCase();
-      badge.className = `badge ${msg.mode}`;
-      $("iface-label").textContent = msg.mode === "live" ? msg.iface : "synthetic traffic";
+      badge.textContent = mode.toUpperCase();
+      badge.className = `badge ${mode}`;
+      $("iface-label").textContent =
+        mode === "live" ? msg.iface
+        : mode === "replay" ? (msg.iface || "recorded session")
+        : "synthetic traffic";
       overlay.classList.add("hidden");
       return;
     }

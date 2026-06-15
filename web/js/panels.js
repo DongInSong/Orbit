@@ -1,5 +1,5 @@
 import { state, topHosts, hostLabel } from "./state.js";
-import { protoColor, fmtRateStr, timeHMS } from "./util.js";
+import { protoColor, fmtRateStr, timeHMS, flagEmoji } from "./util.js";
 import { toast } from "./toast.js";
 import { pin } from "./focus.js";
 
@@ -41,9 +41,10 @@ export function renderHosts() {
     const w = Math.max(1.5, (total / maxEma) * 100);
     const dShare = total > 0 ? h.emaDown / total : 0.5;
     const ipSub = h.name ? `<small>${h.ip}</small>` : "";
+    const ccTag = h.cc ? `<span class="flag h-flag" title="${h.country || h.cc} (${h.cc})">${flagEmoji(h.cc)}</span>` : "";
     return `<div class="host-row" data-ip="${h.ip}" data-name="${h.name || ""}" title="클릭: 상세 패널">
       <i class="h-dot" style="color:${protoColor(h.proto)};background:${protoColor(h.proto)}"></i>
-      <div class="h-name">${hostLabel(h)}${ipSub}</div>
+      <div class="h-name">${ccTag}${hostLabel(h)}${ipSub}</div>
       <div class="h-rate"><span class="d">▼${fmtRateStr(h.emaDown)}</span> <span class="u">▲${fmtRateStr(h.emaUp)}</span></div>
       <div class="h-bar" style="width:${w}%">
         <i class="bd" style="width:${dShare * 100}%"></i><i class="bu" style="width:${(1 - dShare) * 100}%"></i>

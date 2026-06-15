@@ -404,6 +404,34 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 .cl-up { color: var(--amber); }
 .cl-scale { color: var(--dimmer); }
 
+#chart-canvas { cursor: crosshair; }
+
+#scrub-bar {
+  position: absolute;
+  top: 8px; right: 14px;
+  display: flex; align-items: center; gap: 8px;
+  z-index: 3;
+}
+#scrub-bar[hidden] { display: none; }
+#scrub-sel { font-size: 10px; letter-spacing: .06em; font-variant-numeric: tabular-nums; }
+.scrub-btn {
+  background: rgba(167, 139, 250, .08);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--dim);
+  font: inherit; font-size: 10px; letter-spacing: .08em;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.scrub-btn:hover { color: var(--violet); border-color: rgba(167, 139, 250, .45); }
+.scrub-btn:active { transform: translateY(1px); }
+.scrub-btn.live-btn:hover { color: var(--cyan); border-color: rgba(34, 211, 238, .4); }
+.scrub-btn[hidden] { display: none; }
+
+.badge.replay.buffered { border-style: dashed; }
+#chart-panel.replaying { box-shadow: inset 0 1px 0 rgba(167, 139, 250, .35); }
+
 /* --------------------------------------------------------------- overlay */
 
 #overlay {

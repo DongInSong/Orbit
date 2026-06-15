@@ -18,6 +18,8 @@ export const state = {
   chartDown: new Float32Array(CHART_LEN),
   chartUp: new Float32Array(CHART_LEN),
   chartHead: 0,
+  rawTicks: new Array(CHART_LEN).fill(null),  // raw tick JSON, ring-aligned with chart*
+  ticksSeen: 0,                               // total ticks applied (buffer-full check)
   lastTickAt: 0,
   staleSince: 0,             // perf.now when traffic first hit zero (outage cue)
   pinnedIp: null,
@@ -60,8 +62,24 @@ function pushHist(h) {
   h.histHead = (h.histHead + 1) % HIST_LEN;
 }
 
+/* chart ring writes — shared by the live path and replay's buffer-only path.
+   rawTicks[(chartHead+i)%CHART_LEN] uses the same coordinate system as the
+   chart's series(buf,i): i=0 oldest … i=CHART_LEN-1 newest. */
+export function appendChart(tick, raw) {
+  state.chartDown[state.chartHead] = tick.down * 10;
+  state.chartUp[state.chartHead] = tick.up * 10;
+  if (raw !== undefined) state.rawTicks[state.chartHead] = raw;
+  state.chartHead = (state.chartHead + 1) % CHART_LEN;
+  if (state.ticksSeen < CHART_LEN) state.ticksSeen++;
+}
+
+/* chart index i (0 oldest … CHART_LEN-1 newest) → raw tick string, or null */
+export function rawTickAt(i) {
+  return state.rawTicks[(state.chartHead + i) % CHART_LEN];
+}
+
 /* Returns { flows: [{host, down, up, proto}], alerts: [...] } */
-export function applyTick(tick) {
+export function applyTick(tick, raw) {
   const now = performance.now();
   state.lastTickAt = now;
   state.totals = tick.totals;
@@ -78,9 +96,7 @@ export function applyTick(tick) {
   state.rateDown += ((tick.down * 10) - state.rateDown) * EMA_A;
   state.rateUp += ((tick.up * 10) - state.rateUp) * EMA_A;
 
-  state.chartDown[state.chartHead] = tick.down * 10;
-  state.chartUp[state.chartHead] = tick.up * 10;
-  state.chartHead = (state.chartHead + 1) % CHART_LEN;
+  if (raw !== undefined) appendChart(tick, raw);   // chart ring is a live-only write
 
   for (const d of tick.dns) state.names.set(d.ip, d.q);
 

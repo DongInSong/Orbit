@@ -1,12 +1,23 @@
 import { state } from "./state.js";
-import { fmtRateStr } from "./util.js";
+import { clamp, fmtRateStr } from "./util.js";
 
 const LEN = 1200; // matches state ring buffers (120s @ 10Hz)
 
-export function initChart(container, canvas, scaleLabel) {
+export function initChart(container, canvas, scaleLabel, requestRedraw) {
   const ctx = canvas.getContext("2d");
   let W = 0, H = 0, dpr = 1;
   let scaleMax = 1000; // bytes/sec, decays toward current window max
+
+  let hoverIdx = -1;                 // chart index under the cursor (-1 = none)
+  let selStart = -1, selEnd = -1;    // selection range (selStart < 0 = none)
+  let playhead = -1;                 // replay cursor index (-1 = none)
+  let pickHandler = null, dragging = false;
+  const redraw = requestRedraw || (() => {});
+
+  const firstValid = () => LEN - state.ticksSeen;        // oldest filled index
+  const xOfI = i => (i / (LEN - 1)) * W;
+  const idxAtX = px => clamp(Math.round((px / W) * (LEN - 1)),
+                             Math.max(0, firstValid()), LEN - 1);
 
   function resize() {
     dpr = window.devicePixelRatio || 1;
@@ -18,6 +29,32 @@ export function initChart(container, canvas, scaleLabel) {
   }
   new ResizeObserver(resize).observe(container);
   resize();
+
+  canvas.addEventListener("pointermove", e => {
+    hoverIdx = idxAtX(e.offsetX);
+    if (dragging) selEnd = idxAtX(e.offsetX);
+    redraw();
+  });
+  canvas.addEventListener("pointerdown", e => {
+    if (state.ticksSeen === 0) return;
+    dragging = true;
+    selStart = selEnd = idxAtX(e.offsetX);
+    canvas.setPointerCapture(e.pointerId);
+    redraw();
+  });
+  canvas.addEventListener("pointerup", e => {
+    if (!dragging) return;
+    dragging = false;
+    selEnd = idxAtX(e.offsetX);
+    const a = Math.min(selStart, selEnd), b = Math.max(selStart, selEnd);
+    const point = (b - a) < 4;                     // tiny drag = single point
+    selStart = a; selEnd = point ? LEN - 1 : b;    // point → replay to live edge
+    pickHandler && pickHandler({ startIdx: a, endIdx: selEnd, point });
+    redraw();
+  });
+  canvas.addEventListener("pointerleave", () => {
+    if (!dragging) { hoverIdx = -1; redraw(); }
+  });
 
   function series(buf, i) {
     return buf[(state.chartHead + i) % LEN];
@@ -90,8 +127,65 @@ export function initChart(container, canvas, scaleLabel) {
     ctx.lineTo(W, mid);
     ctx.stroke();
 
+    drawScrub(mid);
+
     scaleLabel.textContent = `±${fmtRateStr(scaleMax)} · 120s`;
   }
 
-  return { frame };
+  function drawScrub(mid) {
+    // dim the not-yet-filled region (buffer still warming up)
+    const fv = firstValid();
+    if (fv > 0) { ctx.fillStyle = "rgba(7,10,16,0.55)"; ctx.fillRect(0, 0, xOfI(fv), H); }
+
+    // selection band — violet, the replay accent
+    if (selStart >= 0) {
+      const a = xOfI(Math.min(selStart, selEnd)), b = xOfI(Math.max(selStart, selEnd));
+      ctx.fillStyle = "rgba(167,139,250,0.12)";
+      ctx.fillRect(a, 6, Math.max(b - a, 1.5), H - 12);
+      ctx.strokeStyle = "rgba(167,139,250,0.85)";
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(a, 6); ctx.lineTo(a, H - 6);
+      ctx.moveTo(b, 6); ctx.lineTo(b, H - 6);
+      ctx.stroke();
+    }
+
+    // replay playhead
+    if (playhead >= 0) {
+      const x = xOfI(playhead);
+      ctx.strokeStyle = "rgba(167,139,250,0.9)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, H - 4); ctx.stroke();
+      ctx.fillStyle = "#a78bfa"; ctx.shadowColor = "#a78bfa"; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(x, mid, 3.5, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // hover scrubber + readout chip
+    if (hoverIdx >= 0) {
+      const x = xOfI(hoverIdx);
+      ctx.strokeStyle = "rgba(34,211,238,0.55)";
+      ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, H - 4); ctx.stroke();
+      ctx.setLineDash([]);
+      const ago = (LEN - 1 - hoverIdx) / 10;
+      const d = series(state.chartDown, hoverIdx), u = series(state.chartUp, hoverIdx);
+      const label = `-${ago.toFixed(1)}s  ▼${fmtRateStr(d)}  ▲${fmtRateStr(u)}`;
+      ctx.font = "10px ui-monospace, Consolas, monospace";
+      const w = ctx.measureText(label).width + 12, bx = clamp(x - w / 2, 2, W - w - 2);
+      ctx.fillStyle = "rgba(10,15,26,0.94)";
+      ctx.strokeStyle = "rgba(34,211,238,0.35)";
+      ctx.fillRect(bx, 4, w, 16); ctx.strokeRect(bx, 4, w, 16);
+      ctx.fillStyle = "#d6e2f0"; ctx.textBaseline = "middle";
+      ctx.fillText(label, bx + 6, 12); ctx.textBaseline = "alphabetic";
+    }
+  }
+
+  return {
+    frame,
+    onPick: fn => { pickHandler = fn; },
+    setPlayhead: i => { playhead = i; },
+    setSelection: (a, b) => { selStart = a; selEnd = b; },
+    clearScrub: () => { hoverIdx = selStart = selEnd = playhead = -1; dragging = false; },
+  };
 }

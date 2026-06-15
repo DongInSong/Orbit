@@ -6,6 +6,7 @@ import { fmtRate, fmtBytes, PROTO_COLORS } from "./util.js";
 import { copyHost } from "./toast.js";
 import { pin, render as renderFocus } from "./focus.js";
 import { initStarfield } from "./starfield.js";
+import { scrub, initScrub, startReplay, stopReplay, saveRange, resetScrub } from "./scrub.js";
 
 const $ = id => document.getElementById(id);
 
@@ -14,20 +15,36 @@ window.__orbit = state;   // debug/test handle
 const mapPanel = $("map-panel");
 initStarfield(mapPanel, $("star-canvas"));
 const radial = initRadial(mapPanel, $("trail-canvas"), $("node-canvas"));
-const chart = initChart($("chart-panel"), $("chart-canvas"), $("chart-scale"));
+let chartDirty = true;
+const chart = initChart($("chart-panel"), $("chart-canvas"), $("chart-scale"),
+                        () => { chartDirty = true; });
 const tooltip = $("tooltip");
 const overlay = $("overlay");
 
 radial.onNodeClick((host, e) => copyHost(host.ip, host.name, e.shiftKey));
 radial.onNodePin(host => pin(host));
 
+/* ----------------------------------------------------------- chart scrubber */
+
+initScrub({ radial, addConns, showAlerts, chart, updateHeader,
+            requestRedraw: () => { chartDirty = true; } });
+
+let curSel = null;
+chart.onPick(sel => {
+  curSel = sel;
+  const ticks = sel.endIdx - sel.startIdx + 1;
+  $("scrub-sel").textContent = `${(ticks / 10).toFixed(1)}s · ${ticks} ticks`;
+  $("scrub-bar").hidden = false;
+});
+$("scrub-play").onclick = () => { if (curSel) startReplay(curSel.startIdx, curSel.endIdx); };
+$("scrub-save").onclick = () => { if (curSel) saveRange(curSel.startIdx, curSel.endIdx); };
+$("scrub-live").onclick = () => stopReplay();
+
 $("legend").innerHTML = Object.entries(PROTO_COLORS)
   .map(([p, c]) => `<span><i style="color:${c};background:${c}"></i>${p.toUpperCase()}</span>`)
   .join("");
 
 /* ------------------------------------------------------------- websocket */
-
-let chartDirty = true;
 
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
@@ -46,9 +63,11 @@ function connect() {
         : mode === "replay" ? (msg.iface || "recorded session")
         : "synthetic traffic";
       overlay.classList.add("hidden");
+      resetScrub();
       return;
     }
-    const { flows, alerts } = applyTick(msg);
+    if (scrub.replaying) return;          // ignore live ticks while replaying buffered history
+    const { flows, alerts } = applyTick(msg, e.data);
     radial.spawnFlows(flows);
     addConns(msg.conns, msg.t);
     if (alerts.length) showAlerts(alerts);

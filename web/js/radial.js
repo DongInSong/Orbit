@@ -273,12 +273,23 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       const size = nodeSize(h);
       const color = protoColor(h.proto);
       const ema = h.emaDown + h.emaUp;
+      const failAlert = h.alertUntil > now &&
+        (h.alertType === "failed" || h.alertType === "reset" || h.alertType === "unreach");
 
       // alert marker while fresh
       if (h.alertUntil > now) {
-        if (h.alertType === "failed" || h.alertType === "reset" || h.alertType === "unreach") {
-          // connection failure — a broken, slowly marching red ring
-          // (visually distinct from the scan/dark expanding pulse)
+        if (failAlert) {
+          // connection failure — a marching guide line from LOCAL to the host
+          // (so you can trace where it is) plus a broken red ring on the node
+          nctx.strokeStyle = "rgba(248,113,113,0.5)";
+          nctx.lineWidth = 1;
+          nctx.setLineDash([2, 5]);
+          nctx.lineDashOffset = -(now / 50) % 7;
+          nctx.beginPath();
+          nctx.moveTo(cx, cy);
+          nctx.lineTo(x, y);
+          nctx.stroke();
+
           nctx.strokeStyle = "#f87171";
           nctx.globalAlpha = 0.9;
           nctx.lineWidth = 1.3;
@@ -381,7 +392,7 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       nctx.arc(x, y, size * 1.3, 0, 7);
       nctx.fill();
 
-      if (labeled.has(h.ip) || highlighted) {
+      if (labeled.has(h.ip) || highlighted || failAlert) {
         const out = Math.hypot(x - cx, y - cy) || 1;
         let lx = x + (x - cx) / out * (size + 9);
         let ly = y + (y - cy) / out * (size + 9) + 3;
@@ -394,7 +405,7 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
         if (alignLeft) lx = Math.min(lx, W - 6 - tw);
         else lx = Math.max(lx, 6 + tw);
         ly = clamp(ly, 12, H - 8);
-        nctx.fillStyle = "rgba(187,203,222,0.78)";
+        nctx.fillStyle = failAlert ? "rgba(248,113,113,0.95)" : "rgba(187,203,222,0.78)";
         nctx.textAlign = alignLeft ? "left" : "right";
         nctx.fillText(text, lx, ly);
       }

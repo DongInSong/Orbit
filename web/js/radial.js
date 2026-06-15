@@ -274,7 +274,8 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       const color = protoColor(h.proto);
       const ema = h.emaDown + h.emaUp;
       const failAlert = h.alertUntil > now &&
-        (h.alertType === "failed" || h.alertType === "reset" || h.alertType === "unreach");
+        (h.alertType === "failed" || h.alertType === "reset" ||
+         h.alertType === "unreach" || h.alertType === "loss");
 
       // alert marker while fresh
       if (h.alertUntil > now) {
@@ -448,12 +449,13 @@ export function tooltipHTML(h) {
   const proc = h.proc ? ` · ${h.proc}` : "";
   const loc = h.cc ? `<div class="tt-geo"><span class="flag">${flagEmoji(h.cc)}</span> ${h.cc}${h.country ? ` · ${h.country}` : ""}</div>` : "";
   const org = h.org ? `<div class="tt-geo">${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</div>` : "";
+  const loss = h.loss ? `<div class="tt-loss">⚠ ${h.loss}% retransmit</div>` : "";
   return `${name}<div class="tt-ip">${h.ip}</div>
     <div class="tt-rate">
       <span class="d">▼ <b>${fmtRateStr(h.emaDown)}</b></span> ·
       <span class="u">▲ <b>${fmtRateStr(h.emaUp)}</b></span>
     </div>
     <div class="tt-ip">${h.proto.toUpperCase()}${proc}</div>
-    ${loc}${org}
+    ${loc}${org}${loss}
     <div class="tt-hint">click: copy IP · Shift+click: name · right-click: details</div>`;
 }

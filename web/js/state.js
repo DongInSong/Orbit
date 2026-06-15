@@ -12,6 +12,7 @@ export const state = {
   rateDown: 0,               // EMA bytes/sec
   rateUp: 0,
   pps: 0,
+  lossPct: 0,                // global outbound retransmit % (EMA)
   totals: { up: 0, down: 0, pkts: 0 },
   hosts: new Map(),          // ip -> host record
   names: new Map(),          // ip -> domain
@@ -45,6 +46,7 @@ function hostRecord(ip, name) {
     country: null,                               // localized country name
     asn: null,                                   // autonomous system number
     org: null,                                   // AS organization name
+    loss: null,                                  // outbound retransmit % (DB-IP unrelated)
     lastSeen: 0,
     glow: 0,                                     // activity flash, decays per frame
     firstSeen: Date.now(),
@@ -104,6 +106,7 @@ export function applyTick(tick, raw) {
   state.lastTickAt = now;
   state.totals = tick.totals;
   state.pps = tick.pps;
+  state.lossPct = tick.loss_pct != null ? tick.loss_pct : 0;
 
   // sustained-zero detection for the "no traffic" cue. Ticks keep arriving
   // during an outage (just empty), so gate on rate, not on tick recency.
@@ -135,6 +138,7 @@ export function applyTick(tick, raw) {
     if (th.country) h.country = th.country;
     if (th.asn != null) h.asn = th.asn;          // keep AS0 distinct from absent
     if (th.org) h.org = th.org;
+    h.loss = th.loss != null ? th.loss : null;   // present only while lossy
     h.emaDown += ((th.down * 10) - h.emaDown) * EMA_A;
     h.emaUp += ((th.up * 10) - h.emaUp) * EMA_A;
     h.proto = th.proto;

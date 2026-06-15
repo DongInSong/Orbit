@@ -81,6 +81,7 @@ export function addConns(conns, tickTime) {
 const ALERT_LABEL = {
   scan: "PORT SCAN", dark: "DARK TRAFFIC",
   failed: "CONN FAILED", reset: "CONN REFUSED", unreach: "UNREACHABLE",
+  loss: "PACKET LOSS",
 };
 const alertStrip = document.getElementById("alert-strip");
 

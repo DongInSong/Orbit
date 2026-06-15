@@ -120,7 +120,9 @@ h1 {
 }
 #pps { min-width: 56px; }
 #host-count { min-width: 26px; }
+#loss { min-width: 30px; }
 #total-session { min-width: 62px; }
+.meta em.hot { color: var(--red); }
 
 /* ------------------------------------------------------------------ main */
 
@@ -176,6 +178,7 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 #tooltip .tt-name { color: var(--text); font-weight: 600; }
 #tooltip .tt-ip { color: var(--dim); }
 #tooltip .tt-geo { color: var(--dim); }
+#tooltip .tt-loss { color: var(--red); }
 #tooltip .tt-rate b { font-weight: 400; }
 #tooltip .tt-rate .d { color: var(--cyan); }
 #tooltip .tt-rate .u { color: var(--amber); }

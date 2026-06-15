@@ -55,6 +55,11 @@ DARK_BYTES = 5 * 1024 * 1024   # unnamed public host exceeding this → alert
 SYN_TIMEOUT = 6.0        # outbound SYN with no SYN-ACK within this → failed conn
 FAIL_COOLDOWN = 30.0     # per-host cooldown between connection-failure alerts
 
+LOSS_EMA_A = 0.15        # smoothing for the per-host outbound retransmit ratio
+LOSS_ALERT = 0.05        # sustained ≥5% retransmits → PACKET LOSS alert
+LOSS_MIN_SEG = 40        # need this many outbound data segments before trusting it
+LOSS_COOLDOWN = 30.0
+
 # ----------------------------------------------------------------------- geoip
 GEO_DIR = Path(__file__).resolve().parent.parent / ".geoip"
 GEO_MAX_AGE = 40 * 86400       # re-download a cached build once it is older
@@ -341,16 +346,24 @@ class Aggregator:
         self.private_cache = {}
         self.syn_pending = {}          # (ip, rport) -> ts of an unanswered SYN
         self.fail_alerted = {}         # ip -> last connection-failure alert t
+        self.tcp_hi = {}               # (ip, rport) -> highest outbound seq+len seen
+        self.loss_ema = {}             # ip -> EMA outbound retransmit ratio
+        self.loss_seg = defaultdict(int)   # ip -> cumulative outbound data segments
+        self.loss_alerted = {}         # ip -> last PACKET LOSS alert t
+        self.global_loss = 0.0         # EMA global retransmit ratio
         self._reset()
 
     def _reset(self):
         self.up = 0
         self.down = 0
         self.pkts = 0
+        self.dseg = 0                  # per-tick outbound TCP data segments
+        self.retx = 0                  # per-tick retransmitted segments
         self.proto = defaultdict(int)
         self.hosts = defaultdict(lambda: {"up": 0, "down": 0, "pkts": 0,
                                           "proto": defaultdict(int),
-                                          "procs": defaultdict(int)})
+                                          "procs": defaultdict(int),
+                                          "dseg": 0, "retx": 0})
         self.new_conns = []
         self.dns_events = []
         self.alerts = []
@@ -483,22 +496,74 @@ class Aggregator:
             if len(self.dns_cache) > 20000:
                 self.dns_cache.clear()
 
+    @staticmethod
+    def _seq_lt(a, b):
+        """True if 32-bit seq a is strictly before b (wraparound-safe)."""
+        return 0 < ((b - a) & 0xFFFFFFFF) < 0x80000000
+
+    def note_tcp_seg(self, ip, rport, seq, plen):
+        """Outbound TCP DATA segment. Our own stack sends in order, so a seq that
+        re-covers already-sent data is a retransmission — a clean loss proxy.
+        Tracks a per-flow high-water mark + per-host/global counts."""
+        end = (seq + plen) & 0xFFFFFFFF
+        key = (ip, rport)
+        with self.lock:
+            self.dseg += 1
+            self.hosts[ip]["dseg"] += 1
+            self.loss_seg[ip] += 1
+            hi = self.tcp_hi.get(key)
+            if hi is not None and self._seq_lt(seq, hi):
+                self.retx += 1
+                self.hosts[ip]["retx"] += 1
+            if hi is None or self._seq_lt(hi, end):
+                self.tcp_hi[key] = end
+            if len(self.tcp_hi) > 50000:
+                self.tcp_hi.clear()
+            if len(self.loss_seg) > 50000:
+                self.loss_seg.clear()
+
     def snapshot(self):
         with self.lock:
             self._sweep_failed(time.monotonic())
+            # retransmit ratio (EMA) per host + global, and PACKET LOSS alerts
+            mono = time.monotonic()
+            if self.dseg:
+                self.global_loss += (self.retx / self.dseg - self.global_loss) * LOSS_EMA_A
+            else:
+                self.global_loss *= (1 - LOSS_EMA_A)
+            for ip, h in self.hosts.items():
+                if h["dseg"] <= 0:
+                    continue
+                ratio = h["retx"] / h["dseg"]
+                prev = self.loss_ema.get(ip)
+                e = ratio if prev is None else prev + (ratio - prev) * LOSS_EMA_A
+                self.loss_ema[ip] = e
+                if e > LOSS_ALERT and self.loss_seg.get(ip, 0) >= LOSS_MIN_SEG \
+                        and mono - self.loss_alerted.get(ip, -1e9) > LOSS_COOLDOWN:
+                    self.loss_alerted[ip] = mono
+                    self.alerts.append({"type": "loss", "ip": ip,
+                                        "detail": f"{e * 100:.0f}% retransmits"})
+            if len(self.loss_ema) > 50000:
+                self.loss_ema.clear()
+            if len(self.loss_alerted) > 20000:
+                self.loss_alerted.clear()
             top = sorted(self.hosts.items(),
                          key=lambda kv: kv[1]["up"] + kv[1]["down"],
                          reverse=True)[:TOP_HOSTS_PER_TICK]
             hosts = []
             for ip, h in top:
-                dom = max(h["proto"].items(), key=lambda kv: kv[1])[0]
+                dom = max(h["proto"].items(), key=lambda kv: kv[1])[0] if h["proto"] else "tcp"
                 proc = max(h["procs"].items(), key=lambda kv: kv[1])[0] \
                     if h["procs"] else None
-                hosts.append({
+                rec = {
                     "ip": ip, "up": h["up"], "down": h["down"],
                     "pkts": h["pkts"], "proto": dom, "proc": proc,
                     "name": self.dns_cache.get(ip),
-                })
+                }
+                le = self.loss_ema.get(ip, 0)
+                if le > 0.005:
+                    rec["loss"] = round(le * 100, 1)
+                hosts.append(rec)
             # ensure hosts referenced by fresh alerts have a node so their marker
             # (broken ring / pulse) renders — a failed/unreachable host often
             # carries too little traffic to make the top-N on its own
@@ -510,7 +575,7 @@ class Aggregator:
                 shown.add(aip)
                 h = self.hosts.get(aip)
                 if h:
-                    dom = max(h["proto"].items(), key=lambda kv: kv[1])[0]
+                    dom = max(h["proto"].items(), key=lambda kv: kv[1])[0] if h["proto"] else "tcp"
                     hosts.append({"ip": aip, "up": h["up"], "down": h["down"],
                                   "pkts": h["pkts"], "proto": dom, "proc": None,
                                   "name": self.dns_cache.get(aip)})
@@ -521,6 +586,7 @@ class Aggregator:
             tick = {
                 "t": int(time.time() * 1000),
                 "up": self.up, "down": self.down, "pps": self.pkts * 10,
+                "loss_pct": round(self.global_loss * 100, 1),
                 "proto": {p: self.proto.get(p, 0) for p in PROTOS},
                 "hosts": hosts,
                 "conns": self.new_conns,
@@ -663,6 +729,10 @@ def start_live_capture(agg, iface):
         # connection-health signals
         if tcp_flags is not None:
             agg.note_tcp(remote, rport, direction, tcp_flags)
+            if direction == "up":
+                plen = len(pkt[TCP].payload)
+                if plen:
+                    agg.note_tcp_seg(remote, rport, pkt[TCP].seq, plen)
         elif l4 == "icmp" and ICMP in pkt and pkt[ICMP].type == 3 \
                 and IPerror in pkt:   # 3 = dest-unreachable (11/TTL is normal traceroute)
             oport = pkt[TCPerror].dport if TCPerror in pkt else \

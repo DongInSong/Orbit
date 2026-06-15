@@ -134,14 +134,14 @@ export function measureLive(msg, raw) {
   if (!scrub.replaying || !savedHosts) return;
   const disp = state.hosts;
   const g = { rd: state.rateDown, ru: state.rateUp, pps: state.pps,
-              tot: state.totals, ss: state.staleSince };
+              tot: state.totals, ss: state.staleSince, lp: state.lossPct };
   state.hosts = savedHosts;
   applyTick(msg, raw);                 // updates savedHosts + chart ring + rawTicks
   savedHosts = state.hosts;
   state.hosts = disp;                  // restore the replay display
   // replay owns the header/center during replay — restore display globals
   state.rateDown = g.rd; state.rateUp = g.ru; state.pps = g.pps;
-  state.totals = g.tot; state.staleSince = g.ss;
+  state.totals = g.tot; state.staleSince = g.ss; state.lossPct = g.lp;
 }
 
 function finish() {

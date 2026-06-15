@@ -109,6 +109,9 @@ function updateHeader() {
   $("rate-up-u").textContent = uu;
   $("pps").textContent = state.pps.toLocaleString();
   $("host-count").textContent = state.hosts.size;
+  const lossEl = $("loss");
+  lossEl.textContent = state.lossPct;
+  lossEl.classList.toggle("hot", state.lossPct >= 1);
   $("total-session").textContent = fmtBytes(state.totals.up + state.totals.down);
 }
 

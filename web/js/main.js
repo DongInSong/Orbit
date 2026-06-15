@@ -6,7 +6,8 @@ import { fmtRate, fmtBytes, PROTO_COLORS } from "./util.js";
 import { copyHost } from "./toast.js";
 import { pin, render as renderFocus } from "./focus.js";
 import { initStarfield } from "./starfield.js";
-import { scrub, initScrub, startReplay, stopReplay, saveRange, resetScrub } from "./scrub.js";
+import { scrub, initScrub, startReplay, stopReplay, saveRange, resetScrub,
+         measureLive, seek, togglePause, restart } from "./scrub.js";
 
 const $ = id => document.getElementById(id);
 
@@ -36,7 +37,12 @@ chart.onPick(sel => {
   $("scrub-sel").textContent = `${(ticks / 10).toFixed(1)}s · ${ticks} ticks`;
   $("scrub-bar").hidden = false;
 });
-$("scrub-play").onclick = () => { if (curSel) startReplay(curSel.startIdx, curSel.endIdx); };
+chart.onSeek(i => seek(i));
+$("scrub-play").onclick = () => {
+  if (scrub.replaying) togglePause();
+  else if (curSel) startReplay(curSel.startIdx, curSel.endIdx);
+};
+$("scrub-restart").onclick = () => restart();
 $("scrub-save").onclick = () => { if (curSel) saveRange(curSel.startIdx, curSel.endIdx); };
 $("scrub-live").onclick = () => stopReplay();
 $("scrub-clear").onclick = () => { resetScrub(); curSel = null; };
@@ -70,7 +76,11 @@ function connect() {
       resetScrub();
       return;
     }
-    if (scrub.replaying) return;          // ignore live ticks while replaying buffered history
+    if (scrub.replaying) {                // keep measuring (buffer + bg galaxy), display frozen
+      measureLive(msg, e.data);
+      chartDirty = true;
+      return;
+    }
     const { flows, alerts } = applyTick(msg, e.data);
     radial.spawnFlows(flows);
     addConns(msg.conns, msg.t);

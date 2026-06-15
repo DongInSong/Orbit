@@ -20,6 +20,7 @@ export const state = {
   chartHead: 0,
   rawTicks: new Array(CHART_LEN).fill(null),  // raw tick JSON, ring-aligned with chart*
   ticksSeen: 0,                               // total ticks applied (buffer-full check)
+  chartFreeze: null,                          // {down,up,head,seen} display snapshot during replay
   lastTickAt: 0,
   staleSince: 0,             // perf.now when traffic first hit zero (outage cue)
   pinnedIp: null,

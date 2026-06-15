@@ -579,6 +579,23 @@ def _resolve_iface(iface):
         return None      # let scapy fall back to its own default
 
 
+def _iface_label(dev):
+    """Human-friendly name for a capture device — Windows hands back raw
+    \\Device\\NPF_{GUID} names, so map those back to e.g. 'Wi-Fi'."""
+    if not dev:
+        return "default"
+    try:
+        from scapy.all import conf
+        if not isinstance(dev, str):
+            return getattr(dev, "name", None) or str(dev)
+        if "NPF_" in dev.upper():
+            ni = conf.ifaces.dev_from_networkname(dev)
+            return getattr(ni, "name", None) or dev
+        return dev
+    except Exception:
+        return str(dev)
+
+
 def list_ifaces():
     from scapy.all import conf
     print("\n  Capture interfaces — use the NAME with --iface:\n")
@@ -666,7 +683,7 @@ def start_live_capture(agg, iface):
     sniffer = AsyncSniffer(prn=handle, store=False, filter="ip or ip6",
                            iface=iface or None)
     sniffer.start()
-    return iface          # the interface actually being captured on
+    return _iface_label(iface)    # friendly name of the interface being captured
 
 
 # ----------------------------------------------------------------- demo mode

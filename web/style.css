@@ -224,9 +224,10 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
   transition: opacity .7s;
 }
 .alert-item.fade { opacity: 0; }
-.alert-item b { color: var(--red); font-size: 10px; letter-spacing: .1em; }
-.alert-item span { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.alert-item i { font-style: normal; color: var(--dim); font-size: 10px; }
+.alert-item b { color: var(--red); font-size: 10px; letter-spacing: .1em; white-space: nowrap; flex: none; }
+/* host name is the only thing that shrinks/ellipsises — label + detail stay on one line */
+.alert-item span { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.alert-item i { font-style: normal; color: var(--dim); font-size: 10px; white-space: nowrap; flex: none; }
 .alert-item.dark { border-color: rgba(232, 121, 249, .4); background: rgba(24, 12, 28, .9); }
 .alert-item.dark b { color: var(--magenta); }
 

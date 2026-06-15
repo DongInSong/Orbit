@@ -130,10 +130,17 @@ function loop(now) {
   if (hovered) {
     tooltip.hidden = false;
     tooltip.innerHTML = tooltipHTML(hovered.host);
-    const flipX = hovered.x > mapPanel.clientWidth - 230;
-    tooltip.style.left = flipX ? "" : `${hovered.x + 16}px`;
-    tooltip.style.right = flipX ? `${mapPanel.clientWidth - hovered.x + 16}px` : "";
-    tooltip.style.top = `${Math.min(hovered.y + 12, mapPanel.clientHeight - 90)}px`;
+    // measure the (variable-height) tooltip and keep it fully inside the map
+    // panel — otherwise tall/edge ones get clipped behind the sidebar/chart
+    const W = mapPanel.clientWidth, H = mapPanel.clientHeight;
+    const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+    let left = hovered.x + 16;
+    if (left + tw > W - 4) left = hovered.x - tw - 16;   // flip to the left of the cursor
+    left = Math.max(4, Math.min(left, W - tw - 4));
+    let top = Math.max(4, Math.min(hovered.y + 12, H - th - 6));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.right = "";
+    tooltip.style.top = `${top}px`;
   } else {
     tooltip.hidden = true;
   }

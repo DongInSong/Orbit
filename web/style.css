@@ -408,8 +408,12 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 
 #scrub-bar {
   position: absolute;
-  top: 8px; right: 14px;
+  top: 6px; right: 12px;
   display: flex; align-items: center; gap: 8px;
+  padding: 3px 6px;
+  background: rgba(10, 15, 26, .82);     /* ground the controls; hide graph peaks behind */
+  border: 1px solid var(--border);
+  border-radius: 6px;
   z-index: 3;
 }
 #scrub-bar[hidden] { display: none; }

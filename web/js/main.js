@@ -39,6 +39,10 @@ chart.onPick(sel => {
 $("scrub-play").onclick = () => { if (curSel) startReplay(curSel.startIdx, curSel.endIdx); };
 $("scrub-save").onclick = () => { if (curSel) saveRange(curSel.startIdx, curSel.endIdx); };
 $("scrub-live").onclick = () => stopReplay();
+$("scrub-clear").onclick = () => { resetScrub(); curSel = null; };
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { resetScrub(); curSel = null; }
+});
 
 $("legend").innerHTML = Object.entries(PROTO_COLORS)
   .map(([p, c]) => `<span><i style="color:${c};background:${c}"></i>${p.toUpperCase()}</span>`)

@@ -173,11 +173,12 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
       const label = `-${ago.toFixed(1)}s  ▼${fmtRateStr(d)}  ▲${fmtRateStr(u)}`;
       ctx.font = "10px ui-monospace, Consolas, monospace";
       const w = ctx.measureText(label).width + 12, bx = clamp(x - w / 2, 2, W - w - 2);
+      const cy0 = H - 20;                    // bottom strip — clear of the top controls
       ctx.fillStyle = "rgba(10,15,26,0.94)";
       ctx.strokeStyle = "rgba(34,211,238,0.35)";
-      ctx.fillRect(bx, 4, w, 16); ctx.strokeRect(bx, 4, w, 16);
+      ctx.fillRect(bx, cy0, w, 16); ctx.strokeRect(bx, cy0, w, 16);
       ctx.fillStyle = "#d6e2f0"; ctx.textBaseline = "middle";
-      ctx.fillText(label, bx + 6, 12); ctx.textBaseline = "alphabetic";
+      ctx.fillText(label, bx + 6, cy0 + 8); ctx.textBaseline = "alphabetic";
     }
   }
 

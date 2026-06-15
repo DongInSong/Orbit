@@ -19,6 +19,7 @@ export const state = {
   chartUp: new Float32Array(CHART_LEN),
   chartHead: 0,
   lastTickAt: 0,
+  staleSince: 0,             // perf.now when traffic first hit zero (outage cue)
   pinnedIp: null,
   highlightIp: null,         // set while a sidebar row is hovered
 };
@@ -65,6 +66,14 @@ export function applyTick(tick) {
   state.lastTickAt = now;
   state.totals = tick.totals;
   state.pps = tick.pps;
+
+  // sustained-zero detection for the "no traffic" cue. Ticks keep arriving
+  // during an outage (just empty), so gate on rate, not on tick recency.
+  if (tick.up + tick.down === 0) {
+    if (!state.staleSince) state.staleSince = now;
+  } else {
+    state.staleSince = 0;
+  }
 
   state.rateDown += ((tick.down * 10) - state.rateDown) * EMA_A;
   state.rateUp += ((tick.up * 10) - state.rateUp) * EMA_A;

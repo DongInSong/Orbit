@@ -3,6 +3,7 @@ import { protoColor, clamp, fmtRateStr, flagEmoji } from "./util.js";
 
 const MAX_PARTICLES = 650;
 const LABELED = 9;
+const STALE_MS = 3000;        // zero traffic for this long → "no traffic" state
 
 export function initRadial(container, trailCanvas, nodeCanvas) {
   const tctx = trailCanvas.getContext("2d");
@@ -212,25 +213,27 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
   }
 
   function drawCenter(now) {
-    const act = clamp((state.rateDown + state.rateUp) / 250000, 0, 1);
-    const breath = 1 + Math.sin(now / 900) * 0.08;
+    const stale = state.staleSince && now - state.staleSince > STALE_MS;
+    const act = stale ? 0 : clamp((state.rateDown + state.rateUp) / 250000, 0, 1);
+    const breath = stale ? 1 : 1 + Math.sin(now / 900) * 0.08;   // freeze when idle
     const r = (7 + act * 4) * breath;
+    const hue = stale ? "100,116,139" : "34,211,238";            // cyan → slate
 
     const g = nctx.createRadialGradient(cx, cy, 0, cx, cy, r * 4.5);
-    g.addColorStop(0, "rgba(34,211,238,0.38)");
-    g.addColorStop(0.35, `rgba(34,211,238,${0.08 + act * 0.12})`);
-    g.addColorStop(1, "rgba(34,211,238,0)");
+    g.addColorStop(0, `rgba(${hue},0.38)`);
+    g.addColorStop(0.35, `rgba(${hue},${0.08 + act * 0.12})`);
+    g.addColorStop(1, `rgba(${hue},0)`);
     nctx.fillStyle = g;
     nctx.beginPath();
     nctx.arc(cx, cy, r * 4.5, 0, 7);
     nctx.fill();
 
-    // cross flare — the brightest star in the field
+    // cross flare — the brightest star in the field (dims right down when idle)
     const fl = r * 6.5;
     for (const [dx, dy, len] of [[1, 0, fl], [-1, 0, fl], [0, 1, fl * 0.8], [0, -1, fl * 0.8]]) {
       const lg = nctx.createLinearGradient(cx, cy, cx + dx * len, cy + dy * len);
-      lg.addColorStop(0, "rgba(190,243,252,0.5)");
-      lg.addColorStop(1, "rgba(190,243,252,0)");
+      lg.addColorStop(0, stale ? "rgba(148,163,184,0.16)" : "rgba(190,243,252,0.5)");
+      lg.addColorStop(1, stale ? "rgba(148,163,184,0)" : "rgba(190,243,252,0)");
       nctx.strokeStyle = lg;
       nctx.lineWidth = 1;
       nctx.beginPath();
@@ -239,11 +242,11 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       nctx.stroke();
     }
 
-    nctx.fillStyle = "#bdf3fc";
+    nctx.fillStyle = stale ? "rgba(148,163,184,0.7)" : "#bdf3fc";
     nctx.beginPath();
     nctx.arc(cx, cy, r * 0.55, 0, 7);
     nctx.fill();
-    nctx.strokeStyle = "rgba(34,211,238,0.8)";
+    nctx.strokeStyle = `rgba(${hue},0.8)`;
     nctx.lineWidth = 1.4;
     nctx.beginPath();
     nctx.arc(cx, cy, r, 0, 7);
@@ -253,6 +256,11 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
     nctx.font = "9px ui-monospace, Consolas, monospace";
     nctx.textAlign = "center";
     nctx.fillText("LOCAL", cx, cy + r * 5 * 0.55 + 10);
+    if (stale) {
+      nctx.fillStyle = "rgba(148,163,184,0.9)";
+      nctx.font = "8px ui-monospace, Consolas, monospace";
+      nctx.fillText("NO TRAFFIC", cx, cy + r * 5 * 0.55 + 21);
+    }
   }
 
   function drawHosts(now) {

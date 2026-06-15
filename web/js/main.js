@@ -7,7 +7,7 @@ import { copyHost } from "./toast.js";
 import { pin, render as renderFocus } from "./focus.js";
 import { initStarfield } from "./starfield.js";
 import { scrub, initScrub, startReplay, stopReplay, saveRange, resetScrub,
-         measureLive, seek, togglePause, restart } from "./scrub.js";
+         measureLive, seek, togglePause, restart, resizeRange } from "./scrub.js";
 
 const $ = id => document.getElementById(id);
 
@@ -38,6 +38,7 @@ chart.onPick(sel => {
   $("scrub-bar").hidden = false;
 });
 chart.onSeek(i => seek(i));
+chart.onResize(sel => resizeRange(sel.startIdx, sel.endIdx));
 $("scrub-play").onclick = () => {
   if (scrub.replaying) togglePause();
   else if (curSel) startReplay(curSel.startIdx, curSel.endIdx);

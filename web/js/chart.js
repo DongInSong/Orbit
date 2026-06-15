@@ -12,7 +12,7 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
   let selStart = -1, selEnd = -1;    // selection range (selStart < 0 = none)
   let playhead = -1;                 // replay cursor index (-1 = none)
   let locked = false;                // replay in progress → selection is locked
-  let pickHandler = null, seekHandler = null, dragging = false;
+  let pickHandler = null, seekHandler = null, resizeHandler = null, dragging = false, resizeEdge = null;
   const redraw = requestRedraw || (() => {});
 
   // During replay the DISPLAY is frozen to a snapshot (state.chartFreeze) while
@@ -31,6 +31,14 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
   const lo = () => Math.min(selStart, selEnd);
   const hi = () => Math.max(selStart, selEnd);
   const inSel = i => selStart >= 0 && i >= lo() && i <= hi();
+  const GRAB = 6;   // px proximity to a band edge to grab it for resizing
+  function edgeAt(px) {
+    if (selStart < 0) return null;
+    const dl = Math.abs(px - xOfI(lo())), dr = Math.abs(px - xOfI(hi()));
+    if (dl <= GRAB && dl <= dr) return "lo";
+    if (dr <= GRAB) return "hi";
+    return null;
+  }
 
   function resize() {
     dpr = window.devicePixelRatio || 1;
@@ -46,15 +54,24 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
   canvas.addEventListener("pointermove", e => {
     hoverIdx = idxAtX(e.offsetX);
     if (dragging && !locked) selEnd = hoverIdx;
-    canvas.style.cursor = locked ? (inSel(hoverIdx) ? "pointer" : "default") : "crosshair";
+    else if (dragging && locked && resizeEdge) {   // stretch the locked band's edge
+      const i = idxAtX(e.offsetX);
+      if (resizeEdge === "lo") selStart = clamp(i, Math.max(0, firstValid()), selEnd - 1);
+      else selEnd = clamp(i, selStart + 1, LEN - 1);
+    }
+    canvas.style.cursor = locked
+      ? (edgeAt(e.offsetX) ? "ew-resize" : inSel(hoverIdx) ? "pointer" : "default")
+      : "crosshair";
     redraw();
   });
   canvas.addEventListener("pointerdown", e => {
     if (cSeen() === 0) return;
-    if (locked) {                              // replay: click inside the band = seek
+    if (locked) {                              // replay: edges resize, inside seeks
+      const edge = edgeAt(e.offsetX);
+      if (edge) { resizeEdge = edge; dragging = true; canvas.setPointerCapture(e.pointerId); return; }
       const i = idxAtX(e.offsetX);
       if (inSel(i) && seekHandler) seekHandler(i);
-      return;                                  // no re-selection while locked
+      return;                                  // no full re-selection while locked
     }
     dragging = true;
     if (!state.chartFreeze) freezeChart();   // freeze once → re-picking won't jump the view
@@ -63,6 +80,12 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
     redraw();
   });
   canvas.addEventListener("pointerup", e => {
+    if (dragging && locked && resizeEdge) {        // committed a band resize during replay
+      dragging = false; resizeEdge = null;
+      resizeHandler && resizeHandler({ startIdx: lo(), endIdx: hi() });
+      redraw();
+      return;
+    }
     if (!dragging || locked) return;
     dragging = false;
     selEnd = idxAtX(e.offsetX);
@@ -75,8 +98,9 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
   canvas.addEventListener("pointerleave", () => {
     if (!dragging) { hoverIdx = -1; redraw(); }
   });
-  canvas.addEventListener("pointercancel", () => {   // touch/gesture interrupt → don't get stuck frozen
+  canvas.addEventListener("pointercancel", () => {   // touch/gesture interrupt → don't get stuck
     if (dragging && !locked) { dragging = false; selStart = selEnd = -1; unfreezeChart(); redraw(); }
+    else if (dragging && locked) { dragging = false; resizeEdge = null; redraw(); }
   });
 
   function series(buf, i) {
@@ -171,11 +195,17 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
       ctx.moveTo(a, 6); ctx.lineTo(a, H - 6);
       ctx.moveTo(b, 6); ctx.lineTo(b, H - 6);
       ctx.stroke();
-      if (locked && b - a > 60) {              // discoverability hint inside the locked band
-        ctx.fillStyle = "rgba(196,181,253,0.85)";
-        ctx.font = "8px ui-monospace, Consolas, monospace";
-        ctx.textAlign = "left";
-        ctx.fillText("LOCKED · click to seek", a + 5, 15);
+      if (locked) {                            // grab-handles on the band edges
+        ctx.fillStyle = "#a78bfa";
+        const gy = H / 2 - 7;
+        ctx.fillRect(a - 1.5, gy, 3, 14);
+        ctx.fillRect(b - 1.5, gy, 3, 14);
+        if (b - a > 78) {
+          ctx.fillStyle = "rgba(196,181,253,0.85)";
+          ctx.font = "8px ui-monospace, Consolas, monospace";
+          ctx.textAlign = "left";
+          ctx.fillText("drag edges · click to seek", a + 6, 15);
+        }
       }
     }
 
@@ -216,6 +246,7 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
     frame,
     onPick: fn => { pickHandler = fn; },
     onSeek: fn => { seekHandler = fn; },
+    onResize: fn => { resizeHandler = fn; },
     setPlayhead: i => { playhead = i; },
     setSelection: (a, b) => { selStart = a; selEnd = b; },
     setLocked: v => { locked = v; if (!v) canvas.style.cursor = "crosshair"; },

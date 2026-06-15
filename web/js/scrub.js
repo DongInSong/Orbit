@@ -90,6 +90,27 @@ export function seek(chartIdx) {
   if (!paused) timer = setTimeout(step, TICK_MS / speed);
 }
 
+/* stretch the locked replay range (dragging a band edge) → rebuild frames,
+   keep the playhead roughly where it was */
+export function resizeRange(startIdx, endIdx) {
+  if (!scrub.replaying) return;
+  const playChartIdx = baseIdx + Math.min(idx, Math.max(frames.length - 1, 0));
+  const rebuilt = [];
+  for (let i = startIdx; i <= endIdx; i++) {
+    const s = rawTickAt(i);
+    if (s != null) rebuilt.push(s);
+  }
+  if (!rebuilt.length) return;
+  frames = rebuilt; baseIdx = startIdx; ended = false;
+  idx = clamp(playChartIdx - baseIdx, 0, frames.length - 1);
+  deps.chart.setSelection(startIdx, endIdx);
+  deps.chart.setPlayhead(baseIdx + idx);
+  setPauseUI();
+  clearTimeout(timer);
+  if (!paused) timer = setTimeout(step, TICK_MS / speed);
+  deps.requestRedraw();
+}
+
 export function togglePause() {
   if (!scrub.replaying) return;
   if (ended) { restart(); return; }      // at the end → "↻ AGAIN" replays from the start

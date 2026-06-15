@@ -62,6 +62,7 @@ function connect() {
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);
     if (msg.type === "hello") {
+      resetScrub(); curSel = null;        // tear down any replay/selection before re-badging
       const mode = msg.mode || "live";
       state.mode = mode;
       state.iface = msg.iface;
@@ -73,7 +74,6 @@ function connect() {
         : mode === "replay" ? (msg.iface || "recorded session")
         : "synthetic traffic";
       overlay.classList.add("hidden");
-      resetScrub();
       return;
     }
     if (scrub.replaying) {                // keep measuring (buffer + bg galaxy), display frozen

@@ -207,7 +207,10 @@ function enterReplayUI() {
 
 function exitReplayUI() {
   const b = document.getElementById("mode-badge");
-  if (b && b.dataset.cls !== undefined) { b.textContent = b.dataset.live; b.className = b.dataset.cls; }
+  if (b && b.dataset.cls !== undefined) {
+    b.textContent = b.dataset.live; b.className = b.dataset.cls;
+    delete b.dataset.live; delete b.dataset.cls;
+  }
   setBtn("scrub-play", { text: "▶ REPLAY" });
   setBtn("scrub-restart", { hidden: true });
   setBtn("scrub-live", { hidden: true });

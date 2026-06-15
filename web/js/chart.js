@@ -57,7 +57,7 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
       return;                                  // no re-selection while locked
     }
     dragging = true;
-    freezeChart();                     // selecting freezes the chart so it stops scrolling
+    if (!state.chartFreeze) freezeChart();   // freeze once → re-picking won't jump the view
     selStart = selEnd = idxAtX(e.offsetX);
     canvas.setPointerCapture(e.pointerId);
     redraw();
@@ -74,6 +74,9 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
   });
   canvas.addEventListener("pointerleave", () => {
     if (!dragging) { hoverIdx = -1; redraw(); }
+  });
+  canvas.addEventListener("pointercancel", () => {   // touch/gesture interrupt → don't get stuck frozen
+    if (dragging && !locked) { dragging = false; selStart = selEnd = -1; unfreezeChart(); redraw(); }
   });
 
   function series(buf, i) {

@@ -58,7 +58,7 @@ function connect() {
 
   ws.onclose = () => {
     overlay.classList.remove("hidden");
-    overlay.querySelector("p").textContent = "에이전트 연결 끊김 — 재연결 중…";
+    overlay.querySelector("p").textContent = "agent disconnected — reconnecting…";
     setTimeout(connect, 1500);
   };
 }

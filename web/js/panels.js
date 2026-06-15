@@ -15,7 +15,7 @@ for (const list of [hostList, connList]) {
     if (!row) return;
     const h = state.hosts.get(row.dataset.ip);
     if (h) pin(h);
-    else toast(`비활성 호스트 <b>${row.dataset.ip}</b>`);
+    else toast(`inactive host <b>${row.dataset.ip}</b>`);
   });
   list.addEventListener("mouseover", e => {
     const row = e.target.closest("[data-ip]");
@@ -42,7 +42,7 @@ export function renderHosts() {
     const dShare = total > 0 ? h.emaDown / total : 0.5;
     const ipSub = h.name ? `<small>${h.ip}</small>` : "";
     const ccTag = h.cc ? `<span class="flag h-flag" title="${h.country || h.cc} (${h.cc})">${flagEmoji(h.cc)}</span>` : "";
-    return `<div class="host-row" data-ip="${h.ip}" data-name="${h.name || ""}" title="클릭: 상세 패널">
+    return `<div class="host-row" data-ip="${h.ip}" data-name="${h.name || ""}" title="click for details">
       <i class="h-dot" style="color:${protoColor(h.proto)};background:${protoColor(h.proto)}"></i>
       <div class="h-name">${ccTag}${hostLabel(h)}${ipSub}</div>
       <div class="h-rate"><span class="d">▼${fmtRateStr(h.emaDown)}</span> <span class="u">▲${fmtRateStr(h.emaUp)}</span></div>
@@ -64,7 +64,7 @@ export function addConns(conns, tickTime) {
     row.className = "conn-row";
     row.dataset.ip = c.ip;
     if (c.name || state.names.get(c.ip)) row.dataset.name = c.name || state.names.get(c.ip);
-    row.title = "클릭: 상세 패널";
+    row.title = "click for details";
     row.innerHTML = `<time>${timeHMS(tickTime)}</time>
       <span class="c-name" title="${c.ip}">${name}</span>
       ${c.proc ? `<span class="c-proc">${c.proc}</span>` : ""}
@@ -78,7 +78,10 @@ export function addConns(conns, tickTime) {
   syncHighlight(connList);
 }
 
-const ALERT_LABEL = { scan: "PORT SCAN", dark: "DARK TRAFFIC" };
+const ALERT_LABEL = {
+  scan: "PORT SCAN", dark: "DARK TRAFFIC",
+  failed: "CONN FAILED", reset: "CONN REFUSED", unreach: "UNREACHABLE",
+};
 const alertStrip = document.getElementById("alert-strip");
 
 export function showAlerts(alerts) {

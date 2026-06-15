@@ -266,19 +266,36 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       const color = protoColor(h.proto);
       const ema = h.emaDown + h.emaUp;
 
-      // alert pulse — expanding red rings while the alert is fresh
+      // alert marker while fresh
       if (h.alertUntil > now) {
-        const phase = (now % 1100) / 1100;
-        nctx.strokeStyle = "#f87171";
-        for (const off of [0, 0.5]) {
-          const p = (phase + off) % 1;
-          nctx.globalAlpha = (1 - p) * 0.55;
-          nctx.lineWidth = 1.5;
+        if (h.alertType === "failed" || h.alertType === "reset" || h.alertType === "unreach") {
+          // connection failure — a broken, slowly marching red ring
+          // (visually distinct from the scan/dark expanding pulse)
+          nctx.strokeStyle = "#f87171";
+          nctx.globalAlpha = 0.9;
+          nctx.lineWidth = 1.3;
+          nctx.setLineDash([3, 4]);
+          nctx.lineDashOffset = -(now / 60) % 7;
           nctx.beginPath();
-          nctx.arc(x, y, size + 3 + p * 17, 0, 7);
+          nctx.arc(x, y, size + 5, 0, 7);
           nctx.stroke();
+          nctx.setLineDash([]);
+          nctx.lineDashOffset = 0;
+          nctx.globalAlpha = 1;
+        } else {
+          // scan / dark — expanding red rings
+          const phase = (now % 1100) / 1100;
+          nctx.strokeStyle = "#f87171";
+          for (const off of [0, 0.5]) {
+            const p = (phase + off) % 1;
+            nctx.globalAlpha = (1 - p) * 0.55;
+            nctx.lineWidth = 1.5;
+            nctx.beginPath();
+            nctx.arc(x, y, size + 3 + p * 17, 0, 7);
+            nctx.stroke();
+          }
+          nctx.globalAlpha = 1;
         }
-        nctx.globalAlpha = 1;
       }
 
       // pinned marker
@@ -419,5 +436,5 @@ export function tooltipHTML(h) {
     </div>
     <div class="tt-ip">${h.proto.toUpperCase()}${proc}</div>
     ${loc}${org}
-    <div class="tt-hint">클릭 IP 복사 · Shift+클릭 이름 · 우클릭 상세</div>`;
+    <div class="tt-hint">click: copy IP · Shift+click: name · right-click: details</div>`;
 }

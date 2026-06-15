@@ -39,24 +39,24 @@ export function render(structure = false) {
       <div class="fc-head">
         <i style="color:${protoColor(h.proto)};background:${protoColor(h.proto)}"></i>
         <span class="fc-title">${h.name || h.ip}</span>
-        <button class="fc-close" title="닫기 (Esc)">✕</button>
+        <button class="fc-close" title="close (Esc)">✕</button>
       </div>
       <div class="fc-copy">
-        <button data-copy="${h.ip}" title="IP 복사">${h.ip} ⧉</button>
-        ${h.name ? `<button data-copy="${h.name}" title="이름 복사">${h.name} ⧉</button>` : ""}
+        <button data-copy="${h.ip}" title="copy IP">${h.ip} ⧉</button>
+        ${h.name ? `<button data-copy="${h.name}" title="copy name">${h.name} ⧉</button>` : ""}
       </div>
       <canvas class="fc-spark" width="272" height="46"></canvas>
       <div class="fc-grid">
         <span>▼ <b class="fc-down"></b></span><span>▲ <b class="fc-up"></b></span>
-        <span>누적 ▼ <b class="fc-tdown"></b></span><span>누적 ▲ <b class="fc-tup"></b></span>
-        <span>프로토콜 <b>${h.proto.toUpperCase()}</b></span>
-        <span>${h.proc ? `프로세스 <b>${h.proc}</b>` : ""}</span>
-        <span>${h.cc ? `위치 <b><span class="flag">${flagEmoji(h.cc)}</span> ${h.country || h.cc}</b>` : ""}</span>
+        <span>total ▼ <b class="fc-tdown"></b></span><span>total ▲ <b class="fc-tup"></b></span>
+        <span>protocol <b>${h.proto.toUpperCase()}</b></span>
+        <span>${h.proc ? `process <b>${h.proc}</b>` : ""}</span>
+        <span>${h.cc ? `location <b><span class="flag">${flagEmoji(h.cc)}</span> ${h.country || h.cc}</b>` : ""}</span>
         <span>${h.org ? `ASN <b>${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</b>` : ""}</span>
       </div>
-      ${ports.length ? `<div class="fc-ports">포트 ${ports.map(p => `<em>${p}</em>`).join("")}</div>` : ""}
+      ${ports.length ? `<div class="fc-ports">ports ${ports.map(p => `<em>${p}</em>`).join("")}</div>` : ""}
       <div class="fc-foot">
-        <span>첫 관측 ${timeHMS(h.firstSeen)}</span>
+        <span>first seen ${timeHMS(h.firstSeen)}</span>
         <span class="fc-status"></span>
       </div>`;
   }

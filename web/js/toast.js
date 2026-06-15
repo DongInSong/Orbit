@@ -13,6 +13,6 @@ export function toast(html) {
 export function copyHost(ip, name, preferName) {
   const text = preferName ? (name || ip) : ip;
   navigator.clipboard.writeText(text)
-    .then(() => toast(`복사됨 <b>${text}</b>`))
-    .catch(() => toast("클립보드 접근 실패"));
+    .then(() => toast(`copied <b>${text}</b>`))
+    .catch(() => toast("clipboard access failed"));
 }

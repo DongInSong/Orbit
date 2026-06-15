@@ -52,6 +52,9 @@ SCAN_PORTS = 12          # within SCAN_WINDOW seconds triggers an alert
 SCAN_COOLDOWN = 60.0
 DARK_BYTES = 5 * 1024 * 1024   # unnamed public host exceeding this → alert
 
+SYN_TIMEOUT = 6.0        # outbound SYN with no SYN-ACK within this → failed conn
+FAIL_COOLDOWN = 30.0     # per-host cooldown between connection-failure alerts
+
 # ----------------------------------------------------------------------- geoip
 GEO_DIR = Path(__file__).resolve().parent.parent / ".geoip"
 GEO_MAX_AGE = 40 * 86400       # re-download a cached build once it is older
@@ -122,7 +125,7 @@ class GeoDB:
                     if co.get("iso_code"):
                         out["cc"] = co["iso_code"]
                     names = co.get("names") or {}
-                    nm = names.get("ko") or names.get("en")
+                    nm = names.get("en")
                     if nm:
                         out["country"] = nm
             if asn is not None:
@@ -212,7 +215,7 @@ class GeoDB:
                 return dest
             url = f"{DBIP_BASE}/{slug}-{ym}.mmdb.gz"
             try:
-                print(f"  ◉ GeoIP: {slug} {ym} 내려받는 중…", flush=True)
+                print(f"  ◉ GeoIP: downloading {slug} {ym}…", flush=True)
                 req = urllib.request.Request(url, headers={"User-Agent": "orbit"})
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = gzip.decompress(resp.read())
@@ -336,6 +339,8 @@ class Aggregator:
         self.dark_bytes = defaultdict(int)    # unnamed public ip -> bytes
         self.dark_alerted = set()
         self.private_cache = {}
+        self.syn_pending = {}          # (ip, rport) -> ts of an unanswered SYN
+        self.fail_alerted = {}         # ip -> last connection-failure alert t
         self._reset()
 
     def _reset(self):
@@ -402,11 +407,56 @@ class Aggregator:
                     self.dark_alerted.add(ip)
                     mb = self.dark_bytes[ip] / 1048576
                     self.alerts.append({"type": "dark", "ip": ip,
-                                        "detail": f"DNS 이름 없이 {mb:.1f} MB"})
+                                        "detail": f"{mb:.1f} MB, no DNS name"})
                 # bound the accumulator like the other long-lived maps — a lossy
                 # link churns through many distinct public IPs otherwise
                 elif len(self.dark_bytes) > 20000:
                     self.dark_bytes.clear()
+
+    def note_tcp(self, ip, port, direction, flags):
+        """Track TCP handshakes to flag failed connections — an outbound SYN
+        with no SYN-ACK (timeout, swept in snapshot) or answered by a RST
+        (refused). LAN hosts count too (router/switch), so unlike scan/dark
+        this does NOT skip private IPs."""
+        SYN, ACK, RST = 0x02, 0x10, 0x04
+        now = time.monotonic()
+        key = (ip, port)
+        with self.lock:
+            if direction == "up" and (flags & SYN) and not (flags & ACK):
+                self.syn_pending.setdefault(key, now)   # keep the first SYN's clock
+                if len(self.syn_pending) > 20000:
+                    self.syn_pending.clear()
+            elif direction == "down" and (flags & SYN) and (flags & ACK):
+                self.syn_pending.pop(key, None)         # handshake completed
+            elif direction == "down" and (flags & RST):
+                if self.syn_pending.pop(key, None) is not None:
+                    self._fail(ip, "reset", f":{port} connection refused", now)
+
+    def note_unreach(self, ip, port, icmp_type):
+        """ICMP destination-unreachable (3) / TTL-exceeded (11), attributed to
+        the real unreachable host unwrapped from the embedded packet."""
+        now = time.monotonic()
+        label = "unreachable" if icmp_type == 3 else "TTL exceeded"
+        detail = f":{port} {label}" if port else label
+        with self.lock:
+            self._fail(ip, "unreach", detail, now)
+
+    def _fail(self, ip, kind, detail, now):
+        """Emit a failure alert with a per-host cooldown. Caller holds the lock."""
+        if now - self.fail_alerted.get(ip, -1e9) > FAIL_COOLDOWN:
+            self.fail_alerted[ip] = now
+            self.alerts.append({"type": kind, "ip": ip, "detail": detail})
+        if len(self.fail_alerted) > 20000:
+            self.fail_alerted.clear()
+
+    def _sweep_failed(self, now):
+        """Outbound SYNs unanswered past SYN_TIMEOUT → failed connection.
+        Caller holds the lock (invoked from snapshot)."""
+        expired = [k for k, t in self.syn_pending.items() if now - t > SYN_TIMEOUT]
+        for key in expired:
+            del self.syn_pending[key]
+            ip, port = key
+            self._fail(ip, "failed", f":{port} no reply", now)
 
     def _check_scan(self, ip, port, now):
         if self._private(ip):
@@ -435,6 +485,7 @@ class Aggregator:
 
     def snapshot(self):
         with self.lock:
+            self._sweep_failed(time.monotonic())
             top = sorted(self.hosts.items(),
                          key=lambda kv: kv[1]["up"] + kv[1]["down"],
                          reverse=True)[:TOP_HOSTS_PER_TICK]
@@ -448,6 +499,25 @@ class Aggregator:
                     "pkts": h["pkts"], "proto": dom, "proc": proc,
                     "name": self.dns_cache.get(ip),
                 })
+            # ensure hosts referenced by fresh alerts have a node so their marker
+            # (broken ring / pulse) renders — a failed/unreachable host often
+            # carries too little traffic to make the top-N on its own
+            shown = {r["ip"] for r in hosts}
+            for a in self.alerts:
+                aip = a.get("ip")
+                if not aip or aip in shown:
+                    continue
+                shown.add(aip)
+                h = self.hosts.get(aip)
+                if h:
+                    dom = max(h["proto"].items(), key=lambda kv: kv[1])[0]
+                    hosts.append({"ip": aip, "up": h["up"], "down": h["down"],
+                                  "pkts": h["pkts"], "proto": dom, "proc": None,
+                                  "name": self.dns_cache.get(aip)})
+                else:
+                    hosts.append({"ip": aip, "up": 0, "down": 0, "pkts": 0,
+                                  "proto": "other", "proc": None,
+                                  "name": self.dns_cache.get(aip)})
             tick = {
                 "t": int(time.time() * 1000),
                 "up": self.up, "down": self.down, "pps": self.pkts * 10,
@@ -527,7 +597,8 @@ def list_ifaces():
 
 
 def start_live_capture(agg, iface):
-    from scapy.all import AsyncSniffer, DNS, ICMP, IP, IPv6, TCP, UDP  # noqa: lazy
+    from scapy.all import (AsyncSniffer, DNS, ICMP, IP, IPv6, TCP, UDP,  # noqa: lazy
+                           IPerror, TCPerror, UDPerror)
     try:
         from scapy.layers.inet6 import ICMPv6EchoRequest  # noqa: F401
     except ImportError:
@@ -553,8 +624,10 @@ def start_live_capture(agg, iface):
             return
 
         sport = dport = 0
+        tcp_flags = None
         if TCP in pkt:
             sport, dport, l4 = pkt[TCP].sport, pkt[TCP].dport, "tcp"
+            tcp_flags = int(pkt[TCP].flags)
         elif UDP in pkt:
             sport, dport, l4 = pkt[UDP].sport, pkt[UDP].dport, "udp"
         elif ICMP in pkt or (IPv6 in pkt and pkt[IPv6].nh == 58):
@@ -569,6 +642,15 @@ def start_live_capture(agg, iface):
             lport = sport if direction == "up" else dport
             proc = procmap.lookup(l4, lport)
         agg.add(remote, rport, proto, size, direction, proc)
+
+        # connection-health signals
+        if tcp_flags is not None:
+            agg.note_tcp(remote, rport, direction, tcp_flags)
+        elif l4 == "icmp" and ICMP in pkt and pkt[ICMP].type == 3 \
+                and IPerror in pkt:   # 3 = dest-unreachable (11/TTL is normal traceroute)
+            oport = pkt[TCPerror].dport if TCPerror in pkt else \
+                pkt[UDPerror].dport if UDPerror in pkt else None
+            agg.note_unreach(pkt[IPerror].dst, oport, pkt[ICMP].type)
 
         if proto == "dns" and DNS in pkt and pkt[DNS].qr == 1 and pkt[DNS].ancount:
             try:
@@ -936,7 +1018,7 @@ def main():
 
     if mode == "replay":
         if not os.path.exists(args.replay):
-            print(f"\n  [!] 리플레이 파일을 찾을 수 없습니다: {args.replay}\n")
+            print(f"\n  [!] replay file not found: {args.replay}\n")
             sys.exit(1)
         iface = os.path.basename(args.replay)
     else:
@@ -946,10 +1028,10 @@ def main():
             try:
                 iface = str(start_live_capture(agg, args.iface) or args.iface or "default")
             except Exception as e:
-                print(f"\n  [!] 캡처 시작 실패: {e}")
-                print("      Npcap이 설치되어 있는지, 관리자 권한으로 실행했는지 확인하세요.")
-                print("      Npcap: https://npcap.com  (설치 시 'WinPcap API-compatible mode' 체크)")
-                print("      캡처 없이 화면만 보려면: python orbit_agent.py --demo\n")
+                print(f"\n  [!] capture failed to start: {e}")
+                print("      Check that Npcap is installed and you ran as administrator.")
+                print("      Npcap: https://npcap.com  (enable 'WinPcap API-compatible mode' on install)")
+                print("      To preview the UI without capture: python orbit_agent.py --demo\n")
                 sys.exit(1)
 
     recorder = None
@@ -959,7 +1041,7 @@ def main():
             recorder = TickRecorder(path, mode, iface)
             print(f"  ◉ recording → {path}")
         except OSError as e:
-            print(f"  [!] 기록 파일 열기 실패: {e}")
+            print(f"  [!] could not open recording file: {e}")
 
     app = web.Application(middlewares=[no_cache])
     app["agg"] = agg
@@ -980,7 +1062,7 @@ def main():
     url = f"http://localhost:{args.port}"
     print(f"\n  ◉ Orbit  —  {mode.upper()} mode")
     if mode == "live":
-        print(f"    capturing on: {iface}   (다른 어댑터면: --iface \"<name>\", 목록: --list-ifaces)")
+        print(f"    capturing on: {iface}   (other adapter: --iface \"<name>\", list: --list-ifaces)")
     print(f"    {url}\n", flush=True)
     if not args.no_browser:
         threading.Timer(0.8, lambda: open_app(url, args.port)).start()

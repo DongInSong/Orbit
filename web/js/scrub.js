@@ -1,13 +1,14 @@
 /* Chart scrubber — replay or save the buffered ~120s window from a selected
    point. 100% frontend; the agent is never paused.
 
-   During replay the chart DISPLAY is frozen to the selection window while live
-   ticks keep being measured into the buffer + a background live galaxy. The
-   selection is locked (click inside it to seek); on exit the chart catches up
-   to the live edge and the galaxy returns to the real "now". Pacing mirrors the
-   backend's --replay exactly. */
+   Selecting a region freezes the chart (state.chartFreeze) so it stops scrolling
+   while you adjust/replay; live ticks keep being measured into the buffer + a
+   background live galaxy. Replay locks the selection (click inside to seek) and,
+   when it reaches the end, parks there paused (it does NOT auto-clear). Exiting
+   (↺ LIVE / ✕) unfreezes → the chart catches up and the galaxy returns to now.
+   Pacing mirrors the backend's --replay exactly. */
 
-import { state, applyTick, rawTickAt } from "./state.js";
+import { state, applyTick, rawTickAt, freezeChart } from "./state.js";
 import { clamp } from "./util.js";
 
 const TICK_MS = 100, CLAMP_MS = 1000;   // mirror backend TICK_SEC=0.1 / REC_CLAMP_HI=1.0
@@ -15,7 +16,7 @@ const TICK_MS = 100, CLAMP_MS = 1000;   // mirror backend TICK_SEC=0.1 / REC_CLA
 export const scrub = { replaying: false };
 
 let deps = null, timer = 0;
-let frames = [], idx = 0, baseIdx = 0, speed = 1, paused = false, savedHosts = null;
+let frames = [], idx = 0, baseIdx = 0, speed = 1, paused = false, ended = false, savedHosts = null;
 
 export function initScrub(d) { deps = d; }   // {radial, addConns, showAlerts, chart, updateHeader, requestRedraw}
 
@@ -24,17 +25,13 @@ export function startReplay(startIdx, endIdx) {
   if (savedHosts) { state.hosts = savedHosts; savedHosts = null; }   // recover a prior replay
   frames = [];
   for (let i = startIdx; i <= endIdx; i++) {
-    const s = rawTickAt(i);                 // snapshot refs now — decoupled from the live ring
+    const s = rawTickAt(i);                 // reads the frozen snapshot — aligned with the display
     if (s != null) frames.push(s);
   }
   if (!frames.length) return;
-  scrub.replaying = true; idx = 0; baseIdx = startIdx; speed = 1; paused = false;
+  scrub.replaying = true; idx = 0; baseIdx = startIdx; speed = 1; paused = false; ended = false;
   savedHosts = state.hosts; state.hosts = new Map();   // O(1) set-aside; replay can't pollute live stats
-  // freeze the chart display; the live ring keeps advancing underneath (measured)
-  state.chartFreeze = {
-    down: state.chartDown.slice(), up: state.chartUp.slice(),
-    head: state.chartHead, seen: state.ticksSeen,
-  };
+  if (!state.chartFreeze) freezeChart();               // normally already frozen from the pick
   deps.chart.setSelection(startIdx, endIdx);
   deps.chart.setLocked(true);
   enterReplayUI();
@@ -53,7 +50,14 @@ function renderTick(tick, phIdx) {
 
 function step() {
   if (!scrub.replaying || paused) return;
-  if (idx >= frames.length) return finish();
+  if (idx >= frames.length) {                // reached the end → park here, stay locked/frozen
+    ended = true; paused = true;
+    idx = frames.length - 1;
+    deps.chart.setPlayhead(baseIdx + idx);
+    setPauseUI();
+    deps.requestRedraw();
+    return;
+  }
   let tick;
   try { tick = JSON.parse(frames[idx]); } catch { idx++; return step(); }
   renderTick(tick, baseIdx + idx);
@@ -76,24 +80,31 @@ function step() {
 export function seek(chartIdx) {
   if (!scrub.replaying) return;
   clearTimeout(timer);
+  ended = false;
   idx = clamp(chartIdx - baseIdx, 0, frames.length - 1);
   let tick;
   try { tick = JSON.parse(frames[idx]); } catch { return; }
   renderTick(tick, baseIdx + idx);
   idx++;
+  setPauseUI();
   if (!paused) timer = setTimeout(step, TICK_MS / speed);
 }
 
 export function togglePause() {
   if (!scrub.replaying) return;
+  if (ended) { restart(); return; }      // at the end → "↻ AGAIN" replays from the start
   paused = !paused;
-  setPauseUI(paused);
+  setPauseUI();
   if (paused) clearTimeout(timer);
   else step();
 }
 
 export function restart() {
-  if (scrub.replaying) seek(baseIdx);
+  if (!scrub.replaying) return;
+  clearTimeout(timer);
+  ended = false; paused = false; idx = 0;
+  setPauseUI();
+  step();
 }
 
 /* live ticks during replay: keep measuring (buffer + background live galaxy)
@@ -115,24 +126,24 @@ export function measureLive(msg, raw) {
 function finish() {
   clearTimeout(timer); timer = 0;
   if (!scrub.replaying) return;
-  scrub.replaying = false; paused = false;
-  state.chartFreeze = null;                       // un-freeze → chart catches up to live
+  scrub.replaying = false; paused = false; ended = false;
   if (savedHosts) { state.hosts = savedHosts; savedHosts = null; }   // restore the live galaxy
   deps.chart.setLocked(false);
-  deps.chart.clearScrub();
+  deps.chart.clearScrub();             // clears selection + unfreezes → chart catches up
   exitReplayUI();
+  hideBar();
   frames = [];
   deps.requestRedraw();
 }
 
 export function stopReplay() { finish(); }
 
-/* full reset — replay off, markers cleared, scrub bar hidden (called on (re)hello) */
+/* full reset — clears any selection (replaying or not), unfreezes, hides the bar.
+   Called by the ✕ button and on a (re)hello. */
 export function resetScrub() {
-  finish();
-  deps.chart.clearScrub();
-  const bar = document.getElementById("scrub-bar");
-  if (bar) bar.hidden = true;
+  finish();                            // exit replay if active
+  deps.chart.clearScrub();             // clear a selection that was made but not replayed
+  hideBar();
 }
 
 /* ---- save the selected window to a backend-replayable .jsonl ---- */
@@ -169,6 +180,8 @@ function stamp() {   // YYYYMMDDHHMMSS
 
 /* ---- transport UI: buffered-replay badge + play/pause/restart/live ---- */
 
+function hideBar() { const b = document.getElementById("scrub-bar"); if (b) b.hidden = true; }
+
 function setBtn(id, opts) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -176,13 +189,15 @@ function setBtn(id, opts) {
   if (opts.hidden !== undefined) el.hidden = opts.hidden;
 }
 
-function setPauseUI(p) { setBtn("scrub-play", { text: p ? "▶ RESUME" : "❚❚ PAUSE" }); }
+function setPauseUI() {
+  setBtn("scrub-play", { text: ended ? "↻ AGAIN" : paused ? "▶ RESUME" : "❚❚ PAUSE" });
+}
 
 function enterReplayUI() {
   const b = document.getElementById("mode-badge");
   if (b) { b.dataset.live = b.textContent; b.dataset.cls = b.className;
            b.textContent = "REPLAY ◷"; b.className = "badge replay buffered"; }
-  setBtn("scrub-play", { text: "❚❚ PAUSE" });
+  setPauseUI();
   setBtn("scrub-restart", { hidden: false });
   setBtn("scrub-live", { hidden: false });
   setBtn("scrub-save", { hidden: true });        // declutter while replaying

@@ -44,7 +44,7 @@ $("scrub-play").onclick = () => {
 };
 $("scrub-restart").onclick = () => restart();
 $("scrub-save").onclick = () => { if (curSel) saveRange(curSel.startIdx, curSel.endIdx); };
-$("scrub-live").onclick = () => stopReplay();
+$("scrub-live").onclick = () => { stopReplay(); curSel = null; };
 $("scrub-clear").onclick = () => { resetScrub(); curSel = null; };
 document.addEventListener("keydown", e => {
   if (e.key === "Escape") { resetScrub(); curSel = null; }

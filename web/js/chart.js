@@ -1,4 +1,4 @@
-import { state } from "./state.js";
+import { state, freezeChart, unfreezeChart } from "./state.js";
 import { clamp, fmtRateStr } from "./util.js";
 
 const LEN = 1200; // matches state ring buffers (120s @ 10Hz)
@@ -57,6 +57,7 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
       return;                                  // no re-selection while locked
     }
     dragging = true;
+    freezeChart();                     // selecting freezes the chart so it stops scrolling
     selStart = selEnd = idxAtX(e.offsetX);
     canvas.setPointerCapture(e.pointerId);
     redraw();
@@ -215,6 +216,6 @@ export function initChart(container, canvas, scaleLabel, requestRedraw) {
     setPlayhead: i => { playhead = i; },
     setSelection: (a, b) => { selStart = a; selEnd = b; },
     setLocked: v => { locked = v; if (!v) canvas.style.cursor = "crosshair"; },
-    clearScrub: () => { hoverIdx = selStart = selEnd = playhead = -1; dragging = locked = false; },
+    clearScrub: () => { hoverIdx = selStart = selEnd = playhead = -1; dragging = locked = false; unfreezeChart(); },
   };
 }

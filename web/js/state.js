@@ -74,10 +74,29 @@ export function appendChart(tick, raw) {
   if (state.ticksSeen < CHART_LEN) state.ticksSeen++;
 }
 
-/* chart index i (0 oldest … CHART_LEN-1 newest) → raw tick string, or null */
+/* chart index i (0 oldest … CHART_LEN-1 newest) → raw tick string, or null.
+   When frozen, reads the snapshot so the selection/replay/save stay aligned
+   with the frozen display even as the live ring keeps advancing underneath. */
 export function rawTickAt(i) {
-  return state.rawTicks[(state.chartHead + i) % CHART_LEN];
+  const f = state.chartFreeze;
+  const arr = f ? f.raw : state.rawTicks;
+  const head = f ? f.head : state.chartHead;
+  return arr[(head + i) % CHART_LEN];
 }
+
+/* freeze the chart display + buffer to a snapshot (taken when a selection
+   starts) so the picked region stops scrolling; live keeps measuring into the
+   real ring in the background. */
+export function freezeChart() {
+  state.chartFreeze = {
+    down: state.chartDown.slice(),
+    up: state.chartUp.slice(),
+    raw: state.rawTicks.slice(),     // refs only — cheap, immune to live overwrite
+    head: state.chartHead,
+    seen: state.ticksSeen,
+  };
+}
+export function unfreezeChart() { state.chartFreeze = null; }
 
 /* Returns { flows: [{host, down, up, proto}], alerts: [...] } */
 export function applyTick(tick, raw) {

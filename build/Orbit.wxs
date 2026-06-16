@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Orbit MSI (WiX v4/v5). Built by build.ps1:
+  Orbit MSI (WiX v5). Built by build.ps1:
 
-    wix build build/Orbit.wxs -d Version=0.1.0 -d SourceDir=dist\orbit -o dist\Orbit-0.1.0.msi
+    wix build build/Orbit.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext \
+        -d Version=0.1.0 -d SourceDir=<abs path to dist\orbit> -d LicenseRtf=<abs path to license.rtf> -o dist\Orbit-0.1.0.msi
 
-  - SourceDir is the one-folder PyInstaller output (dist\orbit, containing
-    orbit.exe + _internal\...). <Files Include="**"> harvests the whole tree.
-  - perMachine install to Program Files (elevation prompted at install time).
-  - Npcap is NOT bundled (its free license forbids redistribution and it is a
-    kernel driver). Live capture guides the user to npcap.com at runtime; demo
-    and replay need neither Npcap nor admin.
+  Wizard (WixUI_InstallDir): Welcome -> License -> choose install folder ->
+  Verify -> Progress -> Finish (with an Npcap/launch note). Installs perMachine
+  64-bit to C:\Program Files\Orbit. Uninstall removes the app, the Start-Menu
+  shortcuts, and the runtime GeoIP cache in %LOCALAPPDATA%\Orbit.
+
+  Npcap is NOT bundled (its free license forbids redistribution and it is a
+  kernel driver); demo/replay need none, live capture guides to npcap.com.
 -->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package Name="Orbit"
            Manufacturer="Orbit"
            Version="$(var.Version)"
@@ -22,42 +26,54 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of Orbit is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- install root: C:\Program Files\Orbit -->
+    <!-- install wizard: Welcome -> License -> choose folder -> Verify -> Finish -->
+    <ui:WixUI Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
+              Value="Demo and Replay work right away (no admin needed). Live capture additionally needs Npcap (https://npcap.com) and administrator rights. Launch from the Start Menu: 'Orbit' (live) or 'Orbit (Demo)'." />
+
+    <!-- C:\Program Files\Orbit  (64-bit; build with -arch x64) -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Orbit" />
     </StandardDirectory>
-
-    <!-- Start Menu folder: Programs\Orbit -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="AppShortcutFolder" Name="Orbit" />
     </StandardDirectory>
 
-    <!-- harvest the entire PyInstaller one-folder output into INSTALLFOLDER -->
+    <!-- harvest the entire PyInstaller one-folder output -->
     <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
       <Files Include="$(var.SourceDir)\**" />
     </ComponentGroup>
 
-    <!-- Start Menu shortcuts: live capture + a no-admin demo preview -->
+    <!-- Start-Menu shortcuts: live + a no-admin demo -->
     <Component Id="Shortcuts" Directory="AppShortcutFolder" Guid="*">
-      <Shortcut Id="OrbitLive"
-                Name="Orbit"
+      <Shortcut Id="OrbitLive" Name="Orbit"
                 Description="Passive network observatory (live capture — needs Npcap + admin)"
-                Target="[INSTALLFOLDER]orbit.exe"
-                WorkingDirectory="INSTALLFOLDER" />
-      <Shortcut Id="OrbitDemo"
-                Name="Orbit (Demo)"
-                Description="Preview Orbit with synthetic traffic — no capture, no admin"
-                Target="[INSTALLFOLDER]orbit.exe"
-                Arguments="--demo"
-                WorkingDirectory="INSTALLFOLDER" />
+                Target="[INSTALLFOLDER]orbit.exe" WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut Id="OrbitDemo" Name="Orbit (Demo)"
+                Description="Preview with synthetic traffic — no capture, no admin"
+                Target="[INSTALLFOLDER]orbit.exe" Arguments="--demo" WorkingDirectory="INSTALLFOLDER" />
       <RemoveFolder Id="RemoveAppShortcutFolder" Directory="AppShortcutFolder" On="uninstall" />
-      <RegistryValue Root="HKCU" Key="Software\Orbit" Name="installed"
-                     Type="integer" Value="1" KeyPath="yes" />
+      <RegistryValue Root="HKCU" Key="Software\Orbit" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <!-- clean uninstall: also wipe the runtime GeoIP cache (%LOCALAPPDATA%\Orbit).
+         The path is stored at install time and read back via RegistrySearch so
+         RemoveFolderEx knows what to delete on uninstall. -->
+    <Property Id="ORBITDATADIR">
+      <RegistrySearch Id="OrbitDataDirSearch" Root="HKLM" Key="Software\Orbit" Name="DataDir" Type="raw" />
+    </Property>
+    <Component Id="DataCleanup" Directory="INSTALLFOLDER" Guid="*">
+      <RegistryValue Root="HKLM" Key="Software\Orbit" Name="DataDir" Type="string"
+                     Value="[LocalAppDataFolder]Orbit" KeyPath="yes" />
+      <util:RemoveFolderEx On="uninstall" Property="ORBITDATADIR" />
     </Component>
 
     <Feature Id="Main" Title="Orbit" Level="1">
       <ComponentGroupRef Id="AppFiles" />
       <ComponentRef Id="Shortcuts" />
+      <ComponentRef Id="DataCleanup" />
     </Feature>
   </Package>
 </Wix>

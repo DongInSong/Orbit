@@ -26,7 +26,27 @@ pwsh -File build\build.ps1 -TrustCert                              # also trust 
 
 What it does: freezes `agent\orbit_agent.py` (+ `web\`, deps) into `dist\orbit\` with
 PyInstaller → creates/reuses a self-signed code-signing cert in your user store →
-signs `orbit.exe` → builds the MSI with WiX → signs the MSI.
+signs `orbit.exe` → adds the WiX UI + Util extensions → builds the MSI (a real install
+wizard) with WiX → signs the MSI. (The built-in `powershell` works too — the script
+targets Windows PowerShell 5.1+.)
+
+## Installing (the wizard)
+
+Double-click the MSI (or `msiexec /i dist\Orbit-0.1.0.msi`). Steps:
+Welcome → **License** (MIT) → **choose install folder** (default `C:\Program Files\Orbit`)
+→ confirm → install → **Finish** (a note explains Npcap is needed only for live capture
+and that you launch from the Start Menu).
+
+Per-machine install to Program Files + two Start-Menu shortcuts: **Orbit** (live capture)
+and **Orbit (Demo)** (synthetic traffic, no admin/Npcap).
+
+> Installed an earlier/broken build? **Uninstall it first** (Settings → Apps) so you
+> don't end up with duplicate entries.
+
+## Uninstall (clean)
+
+Settings → Apps → Orbit → Uninstall (or `msiexec /x dist\Orbit-0.1.0.msi`). Removes the
+program files, both shortcuts, and the runtime GeoIP cache in `%LOCALAPPDATA%\Orbit`.
 
 ## Self-signed: what to expect
 

@@ -14,3 +14,8 @@ orbit-*.jsonl
 # tooling artifacts
 .playwright-mcp/
 .DS_Store
+
+# MSI build output (PyInstaller freeze + signed installer)
+dist/
+build/_work/
+*.msi

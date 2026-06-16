@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Orbit MSI (WiX v4/v5). Built by build.ps1:
+
+    wix build build/Orbit.wxs -d Version=0.1.0 -d SourceDir=dist\orbit -o dist\Orbit-0.1.0.msi
+
+  - SourceDir is the one-folder PyInstaller output (dist\orbit, containing
+    orbit.exe + _internal\...). <Files Include="**"> harvests the whole tree.
+  - perMachine install to Program Files (elevation prompted at install time).
+  - Npcap is NOT bundled (its free license forbids redistribution and it is a
+    kernel driver). Live capture guides the user to npcap.com at runtime; demo
+    and replay need neither Npcap nor admin.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Orbit"
+           Manufacturer="Orbit"
+           Version="$(var.Version)"
+           UpgradeCode="8E358625-C759-418C-B298-F6495BE56010"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Orbit is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- install root: C:\Program Files\Orbit -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Orbit" />
+    </StandardDirectory>
+
+    <!-- Start Menu folder: Programs\Orbit -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppShortcutFolder" Name="Orbit" />
+    </StandardDirectory>
+
+    <!-- harvest the entire PyInstaller one-folder output into INSTALLFOLDER -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.SourceDir)\**" />
+    </ComponentGroup>
+
+    <!-- Start Menu shortcuts: live capture + a no-admin demo preview -->
+    <Component Id="Shortcuts" Directory="AppShortcutFolder" Guid="*">
+      <Shortcut Id="OrbitLive"
+                Name="Orbit"
+                Description="Passive network observatory (live capture — needs Npcap + admin)"
+                Target="[INSTALLFOLDER]orbit.exe"
+                WorkingDirectory="INSTALLFOLDER" />
+      <Shortcut Id="OrbitDemo"
+                Name="Orbit (Demo)"
+                Description="Preview Orbit with synthetic traffic — no capture, no admin"
+                Target="[INSTALLFOLDER]orbit.exe"
+                Arguments="--demo"
+                WorkingDirectory="INSTALLFOLDER" />
+      <RemoveFolder Id="RemoveAppShortcutFolder" Directory="AppShortcutFolder" On="uninstall" />
+      <RegistryValue Root="HKCU" Key="Software\Orbit" Name="installed"
+                     Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+
+    <Feature Id="Main" Title="Orbit" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="Shortcuts" />
+    </Feature>
+  </Package>
+</Wix>

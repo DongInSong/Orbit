@@ -39,7 +39,16 @@ function Need($name, $cmd, $hint) {
 
 # ---- preflight ----------------------------------------------------------
 Need "Python" "python" "Install from https://python.org and put it on PATH."
-Need "WiX"    "wix"    "Install with: dotnet tool install --global wix"
+
+# WiX: prefer PATH, else the default global-tools location — PATH is often not
+# refreshed in the shell right after `dotnet tool install --global wix`
+$wix = (Get-Command wix -ErrorAction SilentlyContinue).Source
+if (-not $wix) {
+  $cand = Join-Path $env:USERPROFILE ".dotnet\tools\wix.exe"
+  if (Test-Path $cand) { $wix = $cand }
+}
+if (-not $wix) { throw "WiX not found. Install with: dotnet tool install --global wix" }
+Write-Host "  wix: $wix"
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 if ($signtool) { Write-Host "  signtool: $signtool" }
@@ -88,7 +97,7 @@ Sign-File dist\orbit\orbit.exe
 
 Write-Host "`n[5/5] Building + signing the MSI..." -ForegroundColor Yellow
 $msi = "dist\Orbit-$Version.msi"
-Run wix build build\Orbit.wxs -d Version=$Version -d SourceDir=dist\orbit -o $msi
+Run $wix build build\Orbit.wxs -d Version=$Version -d SourceDir=dist\orbit -o $msi
 Sign-File $msi
 
 # ---- optional: trust the cert on THIS machine --------------------------

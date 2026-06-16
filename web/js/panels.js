@@ -8,8 +8,9 @@ const CONN_ROWS = 60;
 
 const hostList = document.getElementById("host-list");
 const connList = document.getElementById("conn-list");
+const alertLog = document.getElementById("alert-log");
 
-for (const list of [hostList, connList]) {
+for (const list of [hostList, connList, alertLog]) {
   list.addEventListener("click", e => {
     const row = e.target.closest("[data-ip]");
     if (!row) return;
@@ -33,8 +34,49 @@ function syncHighlight(list) {
   });
 }
 
+/* ---- host filter ---- */
+const hostSearch = document.getElementById("host-search");
+let hostFilter = "";
+hostSearch.addEventListener("input", () => {
+  hostFilter = hostSearch.value.trim().toLowerCase();
+  renderHosts();
+});
+function matchHost(h, q) {
+  return (h.ip && h.ip.toLowerCase().includes(q))
+    || (h.name && h.name.toLowerCase().includes(q))
+    || (h.proc && h.proc.toLowerCase().includes(q))
+    || (h.org && h.org.toLowerCase().includes(q))
+    || (h.cc && h.cc.toLowerCase().includes(q));
+}
+
+/* ---- CONNECTIONS / ALERTS tabs ---- */
+const bottomTabs = document.getElementById("bottom-tabs");
+const alertUnread = document.getElementById("alert-unread");
+let activePane = "conn-list";
+let unread = 0;
+bottomTabs.addEventListener("click", e => {
+  const tab = e.target.closest(".ptab");
+  if (!tab) return;
+  activePane = tab.dataset.pane;
+  for (const b of bottomTabs.querySelectorAll(".ptab")) b.classList.toggle("active", b === tab);
+  connList.hidden = activePane !== "conn-list";
+  alertLog.hidden = activePane !== "alert-log";
+  if (activePane === "alert-log") { unread = 0; renderUnread(); }
+});
+function renderUnread() {
+  alertUnread.textContent = unread > 99 ? "99+" : String(unread);
+  alertUnread.hidden = unread === 0;
+}
+
 export function renderHosts() {
-  const hosts = topHosts(HOST_ROWS);
+  const hosts = hostFilter
+    ? [...state.hosts.values()].filter(h => matchHost(h, hostFilter))
+        .sort((a, b) => (b.emaDown + b.emaUp) - (a.emaDown + a.emaUp)).slice(0, 40)
+    : topHosts(HOST_ROWS);
+  if (hostFilter && !hosts.length) {
+    hostList.innerHTML = `<div class="list-note">no matching hosts</div>`;
+    return;
+  }
   const maxEma = Math.max(1, ...hosts.map(h => h.emaDown + h.emaUp));
   const html = hosts.map(h => {
     const total = h.emaDown + h.emaUp;
@@ -66,6 +108,7 @@ export function addConns(conns, tickTime) {
     if (c.name || state.names.get(c.ip)) row.dataset.name = c.name || state.names.get(c.ip);
     row.title = "click for details";
     row.innerHTML = `<time>${timeHMS(tickTime)}</time>
+      ${c.cc ? `<span class="flag c-flag">${flagEmoji(c.cc)}</span>` : ""}
       <span class="c-name" title="${esc(c.ip)}">${esc(name)}</span>
       ${c.proc ? `<span class="c-proc">${esc(c.proc)}</span>` : ""}
       <span class="c-port">:${esc(c.port)}</span>
@@ -84,8 +127,9 @@ const ALERT_LABEL = {
   loss: "PACKET LOSS",
 };
 const alertStrip = document.getElementById("alert-strip");
+const ALERT_LOG_MAX = 200;
 
-export function showAlerts(alerts) {
+export function showAlerts(alerts, tickTime) {
   for (const a of alerts) {
     const el = document.createElement("div");
     el.className = `alert-item ${a.type}`;
@@ -94,6 +138,30 @@ export function showAlerts(alerts) {
     alertStrip.prepend(el);
     setTimeout(() => el.classList.add("fade"), 9000);
     setTimeout(() => el.remove(), 9700);
+    pushAlertRow(a, tickTime);
   }
   while (alertStrip.childElementCount > 4) alertStrip.lastElementChild.remove();
+  if (alerts.length && activePane !== "alert-log") { unread += alerts.length; renderUnread(); }
+}
+
+/* Persistent, scrollable alert history. Built with textContent (never innerHTML)
+   for the server-derived host/detail strings; click a row to pin its host. */
+function pushAlertRow(a, tickTime) {
+  const row = document.createElement("div");
+  row.className = `alert-row ${a.type}`;
+  if (a.ip) row.dataset.ip = a.ip;
+  const time = document.createElement("time");
+  time.textContent = tickTime ? timeHMS(tickTime) : "";
+  const type = document.createElement("span");
+  type.className = "ar-type";
+  type.textContent = ALERT_LABEL[a.type] || String(a.type).toUpperCase();
+  const host = document.createElement("span");
+  host.className = "ar-host";
+  host.textContent = a.name || a.ip || "";
+  const detail = document.createElement("span");
+  detail.className = "ar-detail";
+  detail.textContent = a.detail || "";
+  row.append(time, type, host, detail);
+  alertLog.prepend(row);
+  while (alertLog.childElementCount > ALERT_LOG_MAX) alertLog.lastElementChild.remove();
 }

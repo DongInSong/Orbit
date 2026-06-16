@@ -10,6 +10,7 @@
 
 import { state, applyTick, rawTickAt, freezeChart } from "./state.js";
 import { clamp } from "./util.js";
+import { toast } from "./toast.js";
 
 const TICK_MS = 100, CLAMP_MS = 1000;   // mirror backend TICK_SEC=0.1 / REC_CLAMP_HI=1.0
 
@@ -42,7 +43,7 @@ function renderTick(tick, phIdx) {
   const { flows, alerts } = applyTick(tick);    // replay Map; no raw → chart ring untouched
   deps.radial.spawnFlows(flows);
   deps.addConns(tick.conns || [], tick.t);
-  if (alerts.length) deps.showAlerts(alerts);
+  if (alerts.length) deps.showAlerts(alerts, tick.t);
   deps.chart.setPlayhead(phIdx);
   deps.updateHeader();
   deps.requestRedraw();
@@ -193,6 +194,7 @@ export function saveRange(startIdx, endIdx) {
   a.download = `orbit-${state.mode}-${stamp()}.jsonl`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  toast(`saved <b>${a.download}</b>`);
 }
 
 function stamp() {   // YYYYMMDDHHMMSS

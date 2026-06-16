@@ -10,7 +10,7 @@ WiX and signtool are Windows tools).
 |------|---------|
 | Python 3.10+ | https://python.org (tick "Add to PATH") |
 | .NET SDK | https://dotnet.microsoft.com/download (needed for the WiX tool below) |
-| WiX v4+ | `dotnet tool install --global wix` |
+| WiX 5 | `dotnet tool install --global wix --version 5.0.2` — pin v5 (v6/v7 require enrolling in the paid Open Source Maintenance Fee EULA; v5 is the last freely-usable release and uses the same schema) |
 | signtool | *optional* — only if you have the Windows SDK; otherwise the script signs with PowerShell's built-in `Set-AuthenticodeSignature` (no SDK needed) |
 
 PyInstaller is installed automatically by the build script.

@@ -42,8 +42,20 @@ Need "Python" "python" "Install from https://python.org and put it on PATH."
 Need "WiX"    "wix"    "Install with: dotnet tool install --global wix"
 $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
-if (-not $signtool) { throw "signtool.exe not found — install the Windows 10/11 SDK." }
-Write-Host "  signtool: $signtool"
+if ($signtool) { Write-Host "  signtool: $signtool" }
+else { Write-Host "  signtool: not found -> using PowerShell's built-in Set-AuthenticodeSignature" -ForegroundColor DarkYellow }
+
+# sign a file with signtool if present, else the built-in cmdlet (no SDK needed)
+function Sign-File($path) {
+  if ($signtool) {
+    & $signtool sign /sha1 $script:cert.Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $path
+    if ($LASTEXITCODE -ne 0) { throw "signtool failed on $path" }
+  } else {
+    $sig = Set-AuthenticodeSignature -FilePath $path -Certificate $script:cert -HashAlgorithm SHA256 -TimestampServer $TimestampUrl
+    # a self-signed (untrusted) cert reports UnknownError — the file is still signed
+    if ($sig.Status -notin 'Valid', 'UnknownError') { throw "signing failed on $path : $($sig.Status) - $($sig.StatusMessage)" }
+  }
+}
 
 # ---- 1. python deps + PyInstaller --------------------------------------
 Write-Host "`n[1/5] Installing build deps..." -ForegroundColor Yellow
@@ -72,12 +84,12 @@ if (-not $cert) {
 
 # ---- 4. sign exe, build + sign MSI -------------------------------------
 Write-Host "`n[4/5] Signing orbit.exe..." -ForegroundColor Yellow
-Run $signtool sign /sha1 $cert.Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 dist\orbit\orbit.exe
+Sign-File dist\orbit\orbit.exe
 
 Write-Host "`n[5/5] Building + signing the MSI..." -ForegroundColor Yellow
 $msi = "dist\Orbit-$Version.msi"
 Run wix build build\Orbit.wxs -d Version=$Version -d SourceDir=dist\orbit -o $msi
-Run $signtool sign /sha1 $cert.Thumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 $msi
+Sign-File $msi
 
 # ---- optional: trust the cert on THIS machine --------------------------
 if ($TrustCert) {
@@ -86,7 +98,7 @@ if ($TrustCert) {
     $store = New-Object System.Security.Cryptography.X509Certificates.X509Store($storeName, "LocalMachine")
     $store.Open("ReadWrite"); $store.Add($cert); $store.Close()
   }
-  & $signtool verify /pa /v $msi
+  if ($signtool) { & $signtool verify /pa /v $msi } else { (Get-AuthenticodeSignature $msi) | Format-List Status, SignerCertificate }
   Write-Host "  cert trusted — Orbit installs without a publisher warning on this machine." -ForegroundColor Green
 } else {
   Write-Host "`n  NOTE: signed with a self-signed cert. Other machines will still show" -ForegroundColor DarkYellow

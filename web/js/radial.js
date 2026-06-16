@@ -12,6 +12,9 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
   const particles = [];
   let hovered = null;
   let mouseX = -1, mouseY = -1;
+  let labeledIps = new Set();    // top-N host IPs that get a text label
+  let labeledAt = -Infinity;     // refreshed at panel cadence, not every frame
+  const bloomCache = new Map();  // proto color -> reusable unit (r=0..1) gradient
 
   function resize() {
     const oldW = W, oldH = H;
@@ -67,6 +70,21 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
 
   function nodeSize(h) {
     return clamp(2 + Math.log10(1 + (h.emaDown + h.emaUp) / 800) * 2.6, 2, 8);
+  }
+
+  /* The colored bloom ramp depends only on the proto color, so build one unit
+     (radius 0..1) gradient per color and translate/scale it onto each node,
+     instead of allocating a fresh gradient for every star every frame. */
+  function bloomGradient(color) {
+    let g = bloomCache.get(color);
+    if (!g) {
+      g = nctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, color + "55");
+      g.addColorStop(0.4, color + "22");
+      g.addColorStop(1, color + "00");
+      bloomCache.set(color, g);
+    }
+    return g;
   }
 
   /* photographic star: white core + colored bloom + thin tapering
@@ -264,7 +282,14 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
   }
 
   function drawHosts(now) {
-    const labeled = new Set(topHosts(LABELED).map(h => h.ip));
+    // which hosts get a text label is stable identity, not per-frame data —
+    // refresh the top-N at the panel cadence instead of full-sorting every
+    // host on every animation frame
+    if (now - labeledAt > 400) {
+      labeledIps = new Set(topHosts(LABELED).map(h => h.ip));
+      labeledAt = now;
+    }
+    const labeled = labeledIps;
     hovered = null;
     let best = 18 * 18;
 
@@ -363,18 +388,19 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       // brightness twinkle, per-star phase and tempo
       const tw = 0.72 + 0.28 * Math.sin(now / (620 + h.rJitter * 540) + h.rJitter * 6.283);
 
-      // colored bloom — innate, briefly boosted by activity
+      // colored bloom — innate, briefly boosted by activity. Reuse a cached
+      // unit gradient for this color, translated/scaled onto the node, rather
+      // than allocating a fresh radial gradient per star per frame.
       const bloom = size * 3.4;
-      const g = nctx.createRadialGradient(x, y, 0, x, y, bloom);
-      g.addColorStop(0, color + "55");
-      g.addColorStop(0.4, color + "22");
-      g.addColorStop(1, color + "00");
+      nctx.save();
       nctx.globalAlpha = (0.5 + h.glow * 0.5) * (0.65 + 0.35 * tw);
-      nctx.fillStyle = g;
+      nctx.translate(x, y);
+      nctx.scale(bloom, bloom);
+      nctx.fillStyle = bloomGradient(color);
       nctx.beginPath();
-      nctx.arc(x, y, bloom, 0, 7);
+      nctx.arc(0, 0, 1, 0, 7);
       nctx.fill();
-      nctx.globalAlpha = 1;
+      nctx.restore();
       h.glow *= 0.94;
 
       // diffraction spikes on the brighter stars

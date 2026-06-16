@@ -102,7 +102,7 @@ $msi = "dist\Orbit-$Version.msi"
 $src = (Resolve-Path dist\orbit).Path
 # call wix directly (not via Run): Run is an advanced function, so PowerShell
 # would try to bind wix's -d/-o as the function's own common parameters
-& $wix build build\Orbit.wxs -d Version=$Version -d SourceDir=$src -o $msi
+& $wix build build\Orbit.wxs -arch x64 -d Version=$Version -d SourceDir=$src -o $msi
 if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit $LASTEXITCODE)" }
 if ((Get-Item $msi).Length -lt 1MB) {
   throw "MSI is only $((Get-Item $msi).Length) bytes — the file harvest matched nothing. Check SourceDir / Orbit.wxs <Files Include>."

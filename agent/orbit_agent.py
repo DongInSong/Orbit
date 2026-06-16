@@ -1230,7 +1230,19 @@ def main():
     print(f"    {url}\n", flush=True)
     if not args.no_browser:
         threading.Timer(0.8, lambda: open_app(url, args.port)).start()
-    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+    try:
+        web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+    except OSError as e:
+        # most commonly the port is already taken by another Orbit instance —
+        # say so instead of flashing a console that closes on the traceback
+        print(f"\n  [!] could not start on port {args.port}: {e}")
+        print("      Another Orbit may already be running — close it, or use --port <N>.")
+        if getattr(sys, "frozen", False):
+            try:
+                input("\n  Press Enter to close…")
+            except EOFError:
+                pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":

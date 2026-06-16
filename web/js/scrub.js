@@ -12,7 +12,14 @@ import { state, applyTick, rawTickAt, freezeChart } from "./state.js";
 import { clamp } from "./util.js";
 import { toast } from "./toast.js";
 
-const TICK_MS = 100, CLAMP_MS = 1000;   // mirror backend TICK_SEC=0.1 / REC_CLAMP_HI=1.0
+let TICK_MS = 100, CLAMP_MS = 1000;     // defaults; overridden by the hello timing contract
+
+/* the backend declares its tick rate / clamp in the hello frame so this replay
+   pacing can't silently drift from TICK_SEC/REC_CLAMP_HI as it used to */
+export function setTiming(tickHz, clampMs) {
+  if (tickHz > 0) TICK_MS = 1000 / tickHz;
+  if (clampMs > 0) CLAMP_MS = clampMs;
+}
 
 export const scrub = { replaying: false };
 

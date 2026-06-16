@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import gzip
 import json
+import logging
 import math
 import os
 import random
@@ -38,6 +39,8 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from aiohttp import web, WSMsgType
+
+log = logging.getLogger("orbit")    # quiet by default; --verbose flips to DEBUG
 
 TICK_SEC = 0.1
 DEFAULT_PORT = 8420
@@ -171,10 +174,12 @@ class GeoDB:
         try:
             import maxminddb
         except Exception:
+            log.debug("maxminddb unavailable; GeoIP/ASN enrichment disabled", exc_info=True)
             return                   # dep missing → enrichment stays off
         try:
             GEO_DIR.mkdir(parents=True, exist_ok=True)
         except OSError:
+            log.debug("could not create GeoIP dir %s", GEO_DIR, exc_info=True)
             return
         cpath = self._ensure("dbip-country-lite")
         apath = self._ensure("dbip-asn-lite")
@@ -183,11 +188,13 @@ class GeoDB:
             if cpath:
                 country = maxminddb.open_database(str(cpath), maxminddb.MODE_MEMORY)
         except Exception:
+            log.debug("could not open country DB %s", cpath, exc_info=True)
             country = None
         try:
             if apath:
                 asn = maxminddb.open_database(str(apath), maxminddb.MODE_MEMORY)
         except Exception:
+            log.debug("could not open ASN DB %s", apath, exc_info=True)
             asn = None
         with self._lock:
             self._country, self._asn = country, asn
@@ -244,6 +251,7 @@ class GeoDB:
                 os.replace(tmp, dest)
                 return dest
             except Exception:
+                log.debug("GeoIP download failed: %s %s", slug, ym, exc_info=True)
                 tmp.unlink(missing_ok=True)
                 continue             # try the previous month, then give up
         return None
@@ -338,7 +346,7 @@ class ProcessMap:
                 with self._lock:
                     self._map = named
             except Exception:
-                pass
+                log.debug("process-table refresh failed", exc_info=True)
             time.sleep(self.REFRESH)
 
 
@@ -675,6 +683,7 @@ def _resolve_iface(iface):
         dev, _, _ = conf.route.route("0.0.0.0")
         return dev or conf.iface
     except Exception:
+        log.debug("default-route interface detection failed", exc_info=True)
         return None      # let scapy fall back to its own default
 
 
@@ -781,7 +790,7 @@ def start_live_capture(agg, iface):
                         name = r.rrname.decode().rstrip(".")
                         agg.add_dns(name, str(r.rdata))
             except Exception:
-                pass
+                log.debug("DNS answer parse failed", exc_info=True)
 
     sniffer = AsyncSniffer(prn=handle, store=False, filter="ip or ip6",
                            iface=iface or None)
@@ -883,12 +892,26 @@ async def run_demo(agg):
 
 # -------------------------------------------------------------------- server
 
+def _origin_ok(origin, port):
+    """A browser WebSocket upgrade must come from our own localhost page — this
+    blocks a DNS-rebinding / cross-origin page from opening /ws and reading the
+    live traffic feed. Non-browser clients send no Origin header and pass through
+    (a browser always sets Origin on a WS handshake)."""
+    return origin in (f"http://localhost:{port}", f"http://127.0.0.1:{port}",
+                      f"http://[::1]:{port}")
+
+
 async def ws_handler(request):
     app = request.app
+    origin = request.headers.get("Origin")
+    if origin is not None and not _origin_ok(origin, app["port"]):
+        return web.Response(status=403, text="forbidden origin")
     ws = web.WebSocketResponse(heartbeat=30)
     await ws.prepare(request)
     await ws.send_json({"type": "hello", "mode": app["mode"],
-                        "iface": app["iface"] or "default"})
+                        "iface": app["iface"] or "default",
+                        "tick_hz": round(1 / TICK_SEC),
+                        "clamp_ms": int(REC_CLAMP_HI * 1000)})
     app["clients"].add(ws)
     if app["mode"] == "replay":
         app["replay_restart"] = True   # rewind so the new viewer sees frame 0
@@ -1128,7 +1151,14 @@ def main():
                     help="loop the replay when it reaches the end")
     ap.add_argument("--list-ifaces", action="store_true",
                     help="list capture interfaces and exit")
+    ap.add_argument("--verbose", action="store_true",
+                    help="debug logging to stderr (diagnose why GeoIP/process-names/DNS are off)")
     args = ap.parse_args()
+
+    logging.basicConfig(level=logging.WARNING,
+                        format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    if args.verbose:
+        log.setLevel(logging.DEBUG)   # Orbit's own diagnostics only, not asyncio/aiohttp internals
 
     if args.list_ifaces:
         list_ifaces()
@@ -1176,6 +1206,7 @@ def main():
     app["replay"] = args.replay
     app["loop"] = args.loop
     app["replay_restart"] = False
+    app["port"] = args.port
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/", WEB_DIR)

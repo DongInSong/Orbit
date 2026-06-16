@@ -7,7 +7,7 @@ import { copyHost } from "./toast.js";
 import { pin, render as renderFocus } from "./focus.js";
 import { initStarfield } from "./starfield.js";
 import { scrub, initScrub, startReplay, stopReplay, saveRange, resetScrub,
-         measureLive, seek, togglePause, restart, resizeRange } from "./scrub.js";
+         measureLive, seek, togglePause, restart, resizeRange, setTiming } from "./scrub.js";
 
 const $ = id => document.getElementById(id);
 
@@ -79,6 +79,13 @@ function connect() {
       const mode = msg.mode || "live";
       state.mode = mode;
       state.iface = msg.iface;
+      // timing contract: derive replay pacing from the backend; warn if the
+      // chart's baked-in 10Hz assumption (rate × factor / ring length) drifted
+      if (msg.tick_hz) {
+        setTiming(msg.tick_hz, msg.clamp_ms);
+        if (msg.tick_hz !== 10)
+          console.warn(`Orbit: backend tick_hz=${msg.tick_hz}; chart assumes 10Hz — rates and the 120s window will be off.`);
+      }
       const badge = $("mode-badge");
       badge.textContent = mode.toUpperCase();
       badge.className = `badge ${mode}`;

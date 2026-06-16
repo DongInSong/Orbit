@@ -97,10 +97,16 @@ Sign-File dist\orbit\orbit.exe
 
 Write-Host "`n[5/5] Building + signing the MSI..." -ForegroundColor Yellow
 $msi = "dist\Orbit-$Version.msi"
+# absolute SourceDir: the <Files Include> harvest glob is resolved relative to
+# the .wxs file (build\), NOT the working dir, so a relative path matches nothing
+$src = (Resolve-Path dist\orbit).Path
 # call wix directly (not via Run): Run is an advanced function, so PowerShell
 # would try to bind wix's -d/-o as the function's own common parameters
-& $wix build build\Orbit.wxs -d Version=$Version -d SourceDir=dist\orbit -o $msi
+& $wix build build\Orbit.wxs -d Version=$Version -d SourceDir=$src -o $msi
 if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit $LASTEXITCODE)" }
+if ((Get-Item $msi).Length -lt 1MB) {
+  throw "MSI is only $((Get-Item $msi).Length) bytes — the file harvest matched nothing. Check SourceDir / Orbit.wxs <Files Include>."
+}
 Sign-File $msi
 
 # ---- optional: trust the cert on THIS machine --------------------------

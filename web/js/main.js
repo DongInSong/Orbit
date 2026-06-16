@@ -2,7 +2,7 @@ import { state, applyTick } from "./state.js";
 import { initRadial, tooltipHTML } from "./radial.js";
 import { initChart } from "./chart.js";
 import { renderHosts, addConns, showAlerts } from "./panels.js";
-import { fmtRate, fmtBytes, PROTO_COLORS } from "./util.js";
+import { fmtRate, fmtBytes, fmtDur, PROTO_COLORS } from "./util.js";
 import { copyHost } from "./toast.js";
 import { pin, render as renderFocus } from "./focus.js";
 import { initStarfield } from "./starfield.js";
@@ -36,6 +36,7 @@ chart.onPick(sel => {
   const ticks = sel.endIdx - sel.startIdx + 1;
   $("scrub-sel").textContent = `${(ticks / 10).toFixed(1)}s · ${ticks} ticks`;
   $("scrub-bar").hidden = false;
+  $("chart-hint").hidden = true;
 });
 chart.onSeek(i => seek(i));
 chart.onResize(sel => resizeRange(sel.startIdx, sel.endIdx));
@@ -45,10 +46,21 @@ $("scrub-play").onclick = () => {
 };
 $("scrub-restart").onclick = () => restart();
 $("scrub-save").onclick = () => { if (curSel) saveRange(curSel.startIdx, curSel.endIdx); };
-$("scrub-live").onclick = () => { stopReplay(); curSel = null; };
-$("scrub-clear").onclick = () => { resetScrub(); curSel = null; };
+$("scrub-live").onclick = () => { stopReplay(); curSel = null; $("chart-hint").hidden = false; };
+$("scrub-clear").onclick = () => { resetScrub(); curSel = null; $("chart-hint").hidden = false; };
+
+/* onboarding help */
+const helpOverlay = $("help-overlay");
+const closeHelp = () => { helpOverlay.hidden = true; try { localStorage.setItem("orbit-help-seen", "1"); } catch {} };
+$("help-btn").onclick = () => { helpOverlay.hidden = false; };
+$("help-close").onclick = closeHelp;
+helpOverlay.addEventListener("click", e => { if (e.target === helpOverlay) closeHelp(); });
+try { if (!localStorage.getItem("orbit-help-seen")) helpOverlay.hidden = false; } catch {}
+
 document.addEventListener("keydown", e => {
-  if (e.key === "Escape") { resetScrub(); curSel = null; }
+  if (e.key !== "Escape") return;
+  if (!helpOverlay.hidden) { closeHelp(); return; }
+  resetScrub(); curSel = null; $("chart-hint").hidden = false;
 });
 
 $("legend").innerHTML = Object.entries(PROTO_COLORS)
@@ -85,7 +97,7 @@ function connect() {
     const { flows, alerts } = applyTick(msg, e.data);
     radial.spawnFlows(flows);
     addConns(msg.conns, msg.t);
-    if (alerts.length) showAlerts(alerts);
+    if (alerts.length) showAlerts(alerts, msg.t);
     chartDirty = true;
     updateHeader();
   };
@@ -113,6 +125,7 @@ function updateHeader() {
   lossEl.textContent = state.lossPct;
   lossEl.classList.toggle("hot", state.lossPct >= 1);
   $("total-session").textContent = fmtBytes(state.totals.up + state.totals.down);
+  $("session-dur").textContent = state.totals.since ? fmtDur(Date.now() - state.totals.since) : "—";
 }
 
 /* ------------------------------------------------------------ render loop */

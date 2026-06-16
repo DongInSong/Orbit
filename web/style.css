@@ -122,6 +122,7 @@ h1 {
 #host-count { min-width: 26px; }
 #loss { min-width: 30px; }
 #total-session { min-width: 62px; }
+#session-dur { min-width: 46px; }
 .meta em.hot { color: var(--red); }
 
 /* ------------------------------------------------------------------ main */
@@ -319,7 +320,7 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
   border-bottom: 1px solid var(--border);
 }
 
-#host-list, #conn-list {
+#host-list, #conn-list, #alert-log {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
@@ -459,3 +460,118 @@ main { display: grid; grid-template-columns: 1fr 324px; min-height: 0; }
 .overlay-inner { text-align: center; color: var(--dim); }
 .overlay-inner p { margin-top: 14px; font-size: 12px; letter-spacing: .1em; }
 .spin { animation: orbit-spin 2.2s linear infinite; }
+
+/* ----------------------------------------------------- host filter + tabs */
+
+#hosts-panel h2 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+#host-search {
+  flex: 0 1 130px; min-width: 0;
+  background: rgba(96, 165, 250, .06);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit; font-size: 10px; letter-spacing: normal;
+  padding: 2px 7px;
+  outline: none;
+  user-select: text;
+}
+#host-search::placeholder { color: var(--dimmer); letter-spacing: .1em; }
+#host-search:focus { border-color: rgba(34, 211, 238, .45); }
+.list-note { padding: 16px 14px; color: var(--dimmer); font-size: 11px; letter-spacing: .04em; }
+
+.panel-tabs { display: flex; border-bottom: 1px solid var(--border); }
+.ptab {
+  flex: 1;
+  background: none; border: none; border-bottom: 2px solid transparent;
+  color: var(--dim);
+  font: inherit; font-size: 10px; font-weight: 600; letter-spacing: .22em;
+  text-align: left;
+  padding: 10px 14px 8px;
+  cursor: pointer;
+}
+.ptab:hover { color: var(--text); }
+.ptab.active { color: var(--text); border-bottom-color: var(--cyan); }
+.tab-badge {
+  display: inline-block; margin-left: 7px;
+  min-width: 15px; padding: 0 4px;
+  border-radius: 7px;
+  background: var(--red); color: #1a0d10;
+  font-size: 9px; font-weight: 700; letter-spacing: 0;
+  text-align: center; vertical-align: 1px;
+}
+.tab-badge[hidden] { display: none; }
+.tab-pane { flex: 1; min-height: 0; }
+.tab-pane[hidden] { display: none; }
+
+/* -------------------------------------------------------------- alert log */
+
+.alert-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 14px; font-size: 11px; cursor: pointer;
+  border-bottom: 1px solid rgba(27, 36, 53, .45);
+  animation: slide-in .3s ease both;
+}
+.alert-row:hover { background: rgba(96, 165, 250, .06); }
+.alert-row time { color: var(--dimmer); font-size: 10px; flex: none; }
+.alert-row .ar-type { color: var(--red); font-size: 9px; letter-spacing: .1em; white-space: nowrap; flex: none; }
+.alert-row.dark .ar-type { color: var(--magenta); }
+.alert-row .ar-host { color: var(--text); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-row .ar-detail { color: var(--dim); font-size: 10px; white-space: nowrap; flex: none; }
+
+.conn-row .c-flag { font-size: 12px; flex: none; vertical-align: -1px; }
+
+/* ------------------------------------------------------ empty placeholders */
+
+#host-list:empty::after, #conn-list:empty::after, #alert-log:empty::after {
+  display: block; padding: 16px 14px;
+  color: var(--dimmer); font-size: 11px; letter-spacing: .04em;
+}
+#host-list:empty::after, #conn-list:empty::after { content: "waiting for traffic…"; }
+#alert-log:empty::after { content: "no alerts yet"; }
+
+/* ---------------------------------------------------------------- chart hint */
+
+.cl-hint { color: var(--violet); opacity: .7; letter-spacing: .12em; }
+.cl-hint[hidden] { display: none; }
+
+/* --------------------------------------------------------- help affordance */
+
+#help-btn {
+  position: absolute; right: 12px; bottom: 26px; z-index: 4;
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(10, 15, 26, .8);
+  color: var(--dim);
+  font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
+}
+#help-btn:hover { color: var(--cyan); border-color: rgba(34, 211, 238, .4); }
+
+#help-overlay {
+  position: fixed; inset: 0;
+  background: rgba(7, 10, 16, .82);
+  backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 11; padding: 24px;
+}
+#help-overlay[hidden] { display: none; }
+.help-card {
+  position: relative;
+  max-width: 540px; max-height: 100%; overflow-y: auto;
+  background: rgba(10, 15, 26, .97);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px 26px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, .6);
+  line-height: 1.7;
+}
+.help-card h3 { font-size: 11px; letter-spacing: .18em; color: var(--cyan); margin: 16px 0 6px; }
+.help-card h3:first-of-type { margin-top: 0; }
+.help-card ul { list-style: none; }
+.help-card li, .help-card p { font-size: 12px; color: var(--dim); margin: 4px 0; }
+.help-card b { color: var(--text); font-weight: 600; }
+#help-close {
+  position: absolute; top: 12px; right: 14px;
+  background: none; border: none; color: var(--dim);
+  font: inherit; font-size: 14px; cursor: pointer;
+}
+#help-close:hover { color: var(--text); }

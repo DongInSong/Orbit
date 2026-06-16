@@ -1,3 +1,5 @@
-aiohttp>=3.9
-scapy>=2.5
-maxminddb>=2.5
+# upper-bounded to the current major so a future breaking release can't silently
+# break a fresh first-run install (there is no lock file / CI to catch it)
+aiohttp>=3.9,<4
+scapy>=2.5,<3
+maxminddb>=2.5,<3

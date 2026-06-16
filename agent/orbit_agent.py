@@ -64,6 +64,7 @@ LOSS_COOLDOWN = 30.0
 GEO_DIR = Path(__file__).resolve().parent.parent / ".geoip"
 GEO_MAX_AGE = 40 * 86400       # re-download a cached build once it is older
 GEO_CACHE_MAX = 50000
+GEO_MAX_BYTES = 256 * 1024 * 1024   # decompressed DB ceiling — gzip-bomb guard
 DBIP_BASE = "https://download.db-ip.com/free"
 
 
@@ -219,16 +220,31 @@ class GeoDB:
             if dest.exists():
                 return dest
             url = f"{DBIP_BASE}/{slug}-{ym}.mmdb.gz"
+            tmp = dest.with_name(dest.name + ".part")
             try:
                 print(f"  ◉ GeoIP: downloading {slug} {ym}…", flush=True)
                 req = urllib.request.Request(url, headers={"User-Agent": "orbit"})
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    raw = gzip.decompress(resp.read())
-                tmp = dest.with_name(dest.name + ".part")
-                tmp.write_bytes(raw)
+                # Stream-inflate with a hard size ceiling and write straight to a
+                # temp file. A one-shot gzip.decompress(resp.read()) lets a
+                # malicious/corrupt response inflate unbounded into RAM and
+                # OOM-kill the agent (a real DoS, since this blob is then fed to
+                # a native mmap parser). Bound the decompressed size instead.
+                with urllib.request.urlopen(req, timeout=30) as resp, \
+                        gzip.GzipFile(fileobj=resp) as gz, \
+                        open(tmp, "wb") as out:
+                    total = 0
+                    while True:
+                        chunk = gz.read(1 << 20)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > GEO_MAX_BYTES:
+                            raise ValueError(f"{slug}: exceeds {GEO_MAX_BYTES}-byte cap")
+                        out.write(chunk)
                 os.replace(tmp, dest)
                 return dest
             except Exception:
+                tmp.unlink(missing_ok=True)
                 continue             # try the previous month, then give up
         return None
 
@@ -405,7 +421,6 @@ class Aggregator:
                         "dir": direction, "proc": proc,
                         "name": self.dns_cache.get(ip),
                     })
-                self._check_scan(ip, port, now)
             self.conn_last_seen[key] = now
             if len(self.conn_last_seen) > 50000:
                 cutoff = now - CONN_TTL
@@ -430,14 +445,16 @@ class Aggregator:
         """Track TCP handshakes to flag failed connections — an outbound SYN
         with no SYN-ACK (timeout, swept in snapshot) or answered by a RST
         (refused). LAN hosts count too (router/switch), so unlike scan/dark
-        this does NOT skip private IPs."""
+        this does NOT skip private IPs. Keyed by the CONNECTION (lport, ip, port)
+        like tcp_hi, so parallel connections to the same server:port stay
+        independent — one sibling's SYN-ACK can't clear another's pending SYN."""
         SYN, ACK, RST = 0x02, 0x10, 0x04
         now = time.monotonic()
-        key = (ip, port)
+        key = (lport, ip, port)
         with self.lock:
             if direction == "up" and (flags & SYN) and not (flags & ACK):
                 self.syn_pending.setdefault(key, now)   # keep the first SYN's clock
-                self.tcp_hi.pop((lport, ip, port), None)   # new connection → fresh seq space
+                self.tcp_hi.pop(key, None)              # new connection → fresh seq space
                 if len(self.syn_pending) > 20000:
                     self.syn_pending.clear()
             elif direction == "down" and (flags & SYN) and (flags & ACK):
@@ -445,6 +462,14 @@ class Aggregator:
             elif direction == "down" and (flags & RST):
                 if self.syn_pending.pop(key, None) is not None:
                     self._fail(ip, "reset", f":{port} connection refused", now)
+            elif direction == "down" and (flags & SYN) and not (flags & ACK):
+                # An UNSOLICITED inbound SYN: a remote initiating a connection to
+                # us. A port scan sprays these across many of OUR (local) ports,
+                # so key the scan heuristic on lport. A multi-port *peer* (P2P,
+                # QUIC source-port churn, a CDN behind source-port LB) instead
+                # hits ONE of our ports from many source ports — that no longer
+                # false-trips, which the old remote-source-port heuristic did.
+                self._check_scan(ip, lport, now)
 
     def note_unreach(self, ip, port, icmp_type):
         """ICMP destination-unreachable (3) / TTL-exceeded (11), attributed to
@@ -469,7 +494,7 @@ class Aggregator:
         expired = [k for k, t in self.syn_pending.items() if now - t > SYN_TIMEOUT]
         for key in expired:
             del self.syn_pending[key]
-            ip, port = key
+            lport, ip, port = key
             self._fail(ip, "failed", f":{port} no reply", now)
 
     def _check_scan(self, ip, port, now):
@@ -535,11 +560,16 @@ class Aggregator:
             else:
                 self.global_loss *= (1 - LOSS_EMA_A)
             for ip, h in self.hosts.items():
-                if h["dseg"] <= 0:
-                    continue
-                ratio = h["retx"] / h["dseg"]
                 prev = self.loss_ema.get(ip)
-                e = ratio if prev is None else prev + (ratio - prev) * LOSS_EMA_A
+                if h["dseg"] > 0:
+                    ratio = h["retx"] / h["dseg"]
+                    e = ratio if prev is None else prev + (ratio - prev) * LOSS_EMA_A
+                elif prev is None:
+                    continue                      # never lossy — nothing to track
+                else:
+                    e = prev * (1 - LOSS_EMA_A)    # data-quiet this tick → decay toward 0,
+                                                   # so a recovered link's badge clears
+                                                   # instead of sticking lit all session
                 self.loss_ema[ip] = e
                 if e > LOSS_ALERT and self.loss_seg.get(ip, 0) >= LOSS_MIN_SEG \
                         and mono - self.loss_alerted.get(ip, -1e9) > LOSS_COOLDOWN:
@@ -838,12 +868,15 @@ async def run_demo(agg):
             agg.add("192.168.0.1", 0, "icmp", 84, "up")
             agg.add("192.168.0.1", 0, "icmp", 84, "down")
 
-        # periodic inbound port sweep — exercises the real scan detector
+        # periodic inbound port sweep — exercises the real scan detector, which
+        # now keys on unsolicited inbound SYNs to distinct LOCAL ports
         if now > next_scan:
             next_scan = now + rng.uniform(40, 70)
             scanner = f"185.220.{rng.randint(100, 103)}.{rng.randint(2, 254)}"
+            sport = rng.randint(40000, 60000)
             for p in rng.sample(range(20, 9000), 18):
-                agg.add(scanner, p, "tcp", 60, "down")
+                agg.add(scanner, sport, "tcp", 60, "down")
+                agg.note_tcp(p, scanner, sport, "down", 0x02)   # bare SYN → our port p
 
         await asyncio.sleep(TICK_SEC)
 

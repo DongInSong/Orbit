@@ -11,6 +11,14 @@ if errorlevel 1 (
   pause & exit /b 1
 )
 
+REM ---- install deps as the CURRENT user, BEFORE any self-elevation, so a
+REM      compromised/typosquatted package cannot run its setup as administrator ----
+%PY% -c "import aiohttp, scapy, maxminddb" >nul 2>nul
+if errorlevel 1 (
+  echo [Orbit] Installing dependencies...
+  %PY% -m pip install -r agent\requirements.txt
+)
+
 REM ---- demo / replay: synthetic or recorded data, no capture / Npcap / admin ----
 set DEMO=0
 for %%A in (%*) do if /i "%%A"=="--demo" set DEMO=1
@@ -48,11 +56,5 @@ if errorlevel 1 (
 )
 
 :run
-%PY% -c "import aiohttp, scapy, maxminddb" >nul 2>nul
-if errorlevel 1 (
-  echo [Orbit] Installing dependencies...
-  %PY% -m pip install -r agent\requirements.txt
-)
-
 %PY% agent\orbit_agent.py %*
 pause

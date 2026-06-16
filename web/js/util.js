@@ -12,6 +12,22 @@ export function protoColor(p) {
   return PROTO_COLORS[p] || PROTO_COLORS.other;
 }
 
+/* Escape a string for safe interpolation into innerHTML / attributes. Every
+   string Orbit renders that originates off-host is untrusted: passively-observed
+   DNS/PTR names, AS-org strings from the .mmdb, process names, and any field of
+   a replay recording. A crafted name like <img src=x onerror=…> would otherwise
+   execute script in this privileged localhost page. Always route such values
+   through esc() before they reach innerHTML. */
+export function esc(s) {
+  if (s == null) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"];
 
 export function fmtBytes(n) {

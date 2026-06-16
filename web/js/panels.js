@@ -1,5 +1,5 @@
 import { state, topHosts, hostLabel } from "./state.js";
-import { protoColor, fmtRateStr, timeHMS, flagEmoji } from "./util.js";
+import { protoColor, fmtRateStr, timeHMS, flagEmoji, esc } from "./util.js";
 import { toast } from "./toast.js";
 import { pin } from "./focus.js";
 
@@ -15,7 +15,7 @@ for (const list of [hostList, connList]) {
     if (!row) return;
     const h = state.hosts.get(row.dataset.ip);
     if (h) pin(h);
-    else toast(`inactive host <b>${row.dataset.ip}</b>`);
+    else toast(`inactive host <b>${esc(row.dataset.ip)}</b>`);
   });
   list.addEventListener("mouseover", e => {
     const row = e.target.closest("[data-ip]");
@@ -40,11 +40,11 @@ export function renderHosts() {
     const total = h.emaDown + h.emaUp;
     const w = Math.max(1.5, (total / maxEma) * 100);
     const dShare = total > 0 ? h.emaDown / total : 0.5;
-    const ipSub = h.name ? `<small>${h.ip}</small>` : "";
-    const ccTag = h.cc ? `<span class="flag h-flag" title="${h.country || h.cc} (${h.cc})">${flagEmoji(h.cc)}</span>` : "";
-    return `<div class="host-row" data-ip="${h.ip}" data-name="${h.name || ""}" title="click for details">
+    const ipSub = h.name ? `<small>${esc(h.ip)}</small>` : "";
+    const ccTag = h.cc ? `<span class="flag h-flag" title="${esc(h.country || h.cc)} (${esc(h.cc)})">${flagEmoji(h.cc)}</span>` : "";
+    return `<div class="host-row" data-ip="${esc(h.ip)}" data-name="${esc(h.name || "")}" title="click for details">
       <i class="h-dot" style="color:${protoColor(h.proto)};background:${protoColor(h.proto)}"></i>
-      <div class="h-name">${ccTag}${hostLabel(h)}${ipSub}</div>
+      <div class="h-name">${ccTag}${esc(hostLabel(h))}${ipSub}</div>
       <div class="h-rate"><span class="d">▼${fmtRateStr(h.emaDown)}</span> <span class="u">▲${fmtRateStr(h.emaUp)}</span></div>
       <div class="h-bar" style="width:${w}%">
         <i class="bd" style="width:${dShare * 100}%"></i><i class="bu" style="width:${(1 - dShare) * 100}%"></i>
@@ -66,11 +66,11 @@ export function addConns(conns, tickTime) {
     if (c.name || state.names.get(c.ip)) row.dataset.name = c.name || state.names.get(c.ip);
     row.title = "click for details";
     row.innerHTML = `<time>${timeHMS(tickTime)}</time>
-      <span class="c-name" title="${c.ip}">${name}</span>
-      ${c.proc ? `<span class="c-proc">${c.proc}</span>` : ""}
-      <span class="c-port">:${c.port}</span>
-      <span class="c-proto" style="color:${protoColor(c.proto)}">${c.proto.toUpperCase()}</span>
-      <span class="c-dir ${c.dir}">${c.dir === "up" ? "▲" : "▼"}</span>`;
+      <span class="c-name" title="${esc(c.ip)}">${esc(name)}</span>
+      ${c.proc ? `<span class="c-proc">${esc(c.proc)}</span>` : ""}
+      <span class="c-port">:${esc(c.port)}</span>
+      <span class="c-proto" style="color:${protoColor(c.proto)}">${esc(String(c.proto).toUpperCase())}</span>
+      <span class="c-dir ${c.dir === "up" ? "up" : "down"}">${c.dir === "up" ? "▲" : "▼"}</span>`;
     frag.appendChild(row);
   }
   connList.prepend(frag);
@@ -89,8 +89,8 @@ export function showAlerts(alerts) {
   for (const a of alerts) {
     const el = document.createElement("div");
     el.className = `alert-item ${a.type}`;
-    el.innerHTML = `<b>⚠ ${ALERT_LABEL[a.type] || a.type.toUpperCase()}</b>
-      <span>${a.name || a.ip}</span><i>${a.detail}</i>`;
+    el.innerHTML = `<b>⚠ ${esc(ALERT_LABEL[a.type] || String(a.type).toUpperCase())}</b>
+      <span>${esc(a.name || a.ip)}</span><i>${esc(a.detail)}</i>`;
     alertStrip.prepend(el);
     setTimeout(() => el.classList.add("fade"), 9000);
     setTimeout(() => el.remove(), 9700);

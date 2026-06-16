@@ -1,5 +1,5 @@
 import { state, topHosts, hostLabel } from "./state.js";
-import { protoColor, clamp, fmtRateStr, flagEmoji } from "./util.js";
+import { protoColor, clamp, fmtRateStr, flagEmoji, esc } from "./util.js";
 
 const MAX_PARTICLES = 650;
 const LABELED = 9;
@@ -445,17 +445,17 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
 }
 
 export function tooltipHTML(h) {
-  const name = h.name ? `<div class="tt-name">${h.name}</div>` : "";
-  const proc = h.proc ? ` · ${h.proc}` : "";
-  const loc = h.cc ? `<div class="tt-geo"><span class="flag">${flagEmoji(h.cc)}</span> ${h.cc}${h.country ? ` · ${h.country}` : ""}</div>` : "";
-  const org = h.org ? `<div class="tt-geo">${h.asn != null ? `AS${h.asn} ` : ""}${h.org}</div>` : "";
-  const loss = h.loss ? `<div class="tt-loss">⚠ ${h.loss}% retransmit</div>` : "";
-  return `${name}<div class="tt-ip">${h.ip}</div>
+  const name = h.name ? `<div class="tt-name">${esc(h.name)}</div>` : "";
+  const proc = h.proc ? ` · ${esc(h.proc)}` : "";
+  const loc = h.cc ? `<div class="tt-geo"><span class="flag">${flagEmoji(h.cc)}</span> ${esc(h.cc)}${h.country ? ` · ${esc(h.country)}` : ""}</div>` : "";
+  const org = h.org ? `<div class="tt-geo">${h.asn != null ? `AS${esc(h.asn)} ` : ""}${esc(h.org)}</div>` : "";
+  const loss = h.loss ? `<div class="tt-loss">⚠ ${esc(h.loss)}% retransmit</div>` : "";
+  return `${name}<div class="tt-ip">${esc(h.ip)}</div>
     <div class="tt-rate">
       <span class="d">▼ <b>${fmtRateStr(h.emaDown)}</b></span> ·
       <span class="u">▲ <b>${fmtRateStr(h.emaUp)}</b></span>
     </div>
-    <div class="tt-ip">${h.proto.toUpperCase()}${proc}</div>
+    <div class="tt-ip">${esc(String(h.proto).toUpperCase())}${proc}</div>
     ${loc}${org}${loss}
     <div class="tt-hint">click: copy IP · Shift+click: name · right-click: details</div>`;
 }

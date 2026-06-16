@@ -1,3 +1,5 @@
+import { esc } from "./util.js";
+
 const el = () => document.getElementById("toast");
 let hideTimer = 0;
 
@@ -13,6 +15,6 @@ export function toast(html) {
 export function copyHost(ip, name, preferName) {
   const text = preferName ? (name || ip) : ip;
   navigator.clipboard.writeText(text)
-    .then(() => toast(`copied <b>${text}</b>`))
+    .then(() => toast(`copied <b>${esc(text)}</b>`))
     .catch(() => toast("clipboard access failed"));
 }

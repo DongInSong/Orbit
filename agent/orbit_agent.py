@@ -1219,14 +1219,14 @@ async def shutdown_watch(app):
         if not seen:
             if now - start >= STARTUP_GRACE:
                 log.warning("UI never connected — exiting so no hidden process is left behind")
-                asyncio.get_running_loop().stop()
+                app["shutdown"].set()
                 return
             continue
         if gone_at is None:
             gone_at = now
         elif now - gone_at >= IDLE_GRACE:
             log.info("UI closed — shutting down")
-            asyncio.get_running_loop().stop()
+            app["shutdown"].set()
             return
 
 
@@ -1245,6 +1245,32 @@ async def on_cleanup(app):
     rec = app["recorder"]
     if rec is not None:
         rec.close()
+
+
+async def serve(app, host, port):
+    """Run the server until a shutdown is requested (app["shutdown"]), then tear it
+    down cleanly. Replaces web.run_app: calling loop.stop() under run_app trips
+    'Event loop stopped before Future completed', and a manual runner also lets us
+    tell an open UI window we're going (so it can show 'cleaning up…' and close)."""
+    app["shutdown"] = asyncio.Event()
+    runner = web.AppRunner(app)
+    await runner.setup()                       # runs on_startup (tick_loop, shutdown_watch, …)
+    site = web.TCPSite(runner, host, port)
+    try:
+        await site.start()                     # may raise OSError if the port is taken
+    except OSError:
+        await runner.cleanup()
+        raise
+    await app["shutdown"].wait()
+    # let any still-open window show a clean shutdown before it closes itself
+    bye = json.dumps({"type": "bye"})
+    for ws in list(app["clients"]):
+        try:
+            await ws.send_str(bye)
+        except (ConnectionResetError, RuntimeError):
+            pass
+    log.info("cleaning up…")
+    await runner.cleanup()                      # graceful: stop accepting, run on_cleanup
 
 
 # --------------------------------------------------------------- browser launch
@@ -1410,17 +1436,18 @@ def main():
     if not args.no_browser:
         threading.Timer(0.8, lambda: open_app(url, args.port)).start()
     try:
-        web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+        asyncio.run(serve(app, "127.0.0.1", args.port))
     except OSError as e:
         # most commonly the port is already taken by another Orbit instance
         alert("Orbit — could not start",
               f"Could not start on port {args.port}: {e}\n\n"
               "Another Orbit may already be running — close it, or use --port <N>.")
         sys.exit(1)
-    # run_app returned: the UI window closed (shutdown_watch stopped the loop) or
-    # Ctrl+C. The backend is hidden, so force the process down rather than risk a
-    # lingering sniffer/process-map thread keeping an invisible orbit.exe alive.
-    # on_cleanup already ran inside run_app, so the recorder is flushed.
+    except KeyboardInterrupt:
+        pass
+    # Cleanly shut down (on_cleanup flushed the recorder). The backend is hidden, so
+    # force the process down rather than risk a lingering daemon thread keeping an
+    # invisible orbit.exe alive.
     os._exit(0)
 
 

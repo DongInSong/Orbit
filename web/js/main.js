@@ -69,8 +69,13 @@ $("legend").innerHTML = Object.entries(PROTO_COLORS)
 
 /* ------------------------------------------------------------- websocket */
 
+let wsFails = 0;
+const WS_GIVEUP = 4;          // ~6s of failed reconnects -> the backend is gone
+
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => { wsFails = 0; };
 
   ws.onmessage = e => {
     const msg = JSON.parse(e.data);
@@ -115,9 +120,15 @@ function connect() {
   };
 
   ws.onclose = () => {
+    wsFails++;
     overlay.classList.remove("hidden");
-    overlay.querySelector("p").textContent = "agent disconnected — reconnecting…";
-    setTimeout(connect, 1500);
+    // backend gone for good: close our own window (works in the chromeless --app
+    // window; a normal browser tab blocks window.close(), so it just keeps trying).
+    if (wsFails === WS_GIVEUP) window.close();
+    overlay.querySelector("p").textContent = wsFails >= WS_GIVEUP
+      ? "Orbit stopped."
+      : "agent disconnected — reconnecting…";
+    setTimeout(connect, wsFails >= WS_GIVEUP ? 3000 : 1500);
   };
 }
 connect();

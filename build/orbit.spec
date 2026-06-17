@@ -44,7 +44,10 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,                                   # UPX trips antivirus heuristics
-    console=True,                                # the agent prints its banner/logs here
+    console=False,                               # hidden backend: the browser app window is the
+                                                 # only UI. Logs go to %LOCALAPPDATA%\Orbit\orbit.log;
+                                                 # launched from a terminal it reattaches to that
+                                                 # console (see _attach_console) so CLI output shows.
     icon=_icon if os.path.exists(_icon) else None,
 )
 coll = COLLECT(

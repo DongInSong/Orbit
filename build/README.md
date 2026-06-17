@@ -41,6 +41,12 @@ page in your browser when you click Finish.
 Per-machine install to Program Files + two Start-Menu shortcuts: **Orbit** (live capture)
 and **Orbit (Demo)** (synthetic traffic, no admin/Npcap).
 
+The agent runs **hidden** — its UI is a chromeless browser window, so there's no console
+to manage. **Closing that window quits Orbit** (the backend exits a few seconds later);
+if the backend stops, the window closes itself. Diagnostics go to
+`%LOCALAPPDATA%\Orbit\orbit.log`. Need the old console output? Run `orbit.exe` (or
+`orbit.exe --list-ifaces`, `--verbose`) **from a terminal** and it reattaches to it.
+
 > **Upgrades & reinstalls are automatic.** Installing any build — newer *or the same
 > version* — cleanly removes the previous one first, so you never get duplicate
 > entries. Close Orbit before reinstalling (or Windows will ask you to if its files

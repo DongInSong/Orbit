@@ -57,6 +57,36 @@ from aiohttp import web, WSMsgType
 
 log = logging.getLogger("orbit")    # quiet by default; --verbose flips to DEBUG
 
+
+def say(*args, **kwargs):
+    """print() that's a no-op when there's no console (the frozen build is windowed:
+    nothing is attached unless it was launched from a terminal)."""
+    if sys.stdout is None:
+        return
+    try:
+        print(*args, **kwargs)
+    except (OSError, ValueError):
+        pass
+
+
+def alert(title, message):
+    """Surface a fatal message. Logs it, prints it if a console is attached, and on
+    Windows with no console (Start-Menu launch of the windowed build) pops a
+    MessageBox so the user actually sees why Orbit couldn't start."""
+    log.error("%s: %s", title, " ".join(message.split()))
+    say(f"\n  [!] {message}\n")
+    if sys.stdout is None and sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)  # MB_ICONERROR
+        except Exception:
+            log.debug("MessageBox failed", exc_info=True)
+
+
+# UI lifecycle: the backend runs hidden, so it must not outlive its window.
+STARTUP_GRACE = 90.0    # no UI ever connected -> assume it failed to open; don't orphan
+IDLE_GRACE = 4.0        # UI connected then left (window closed) -> quit shortly after
+
 TICK_SEC = 0.1
 DEFAULT_PORT = 8420
 WEB_DIR = _BASE / "web"
@@ -244,7 +274,7 @@ class GeoDB:
             url = f"{DBIP_BASE}/{slug}-{ym}.mmdb.gz"
             tmp = dest.with_name(dest.name + ".part")
             try:
-                print(f"  ◉ GeoIP: downloading {slug} {ym}…", flush=True)
+                say(f"  ◉ GeoIP: downloading {slug} {ym}…", flush=True)
                 req = urllib.request.Request(url, headers={"User-Agent": "orbit"})
                 # Stream-inflate with a hard size ceiling and write straight to a
                 # temp file. A one-shot gzip.decompress(resp.read()) lets a
@@ -721,19 +751,19 @@ def _iface_label(dev):
 
 def list_ifaces():
     from scapy.all import conf
-    print("\n  Capture interfaces — use the NAME with --iface:\n")
+    say("\n  Capture interfaces — use the NAME with --iface:\n")
     try:
         conf.ifaces.show()
     except Exception:
         from scapy.all import get_if_list
         for n in get_if_list():
-            print("   ", n)
+            say("   ", n)
     try:
         dev, _, _ = conf.route.route("0.0.0.0")
-        print(f"\n  default route → {dev}")
+        say(f"\n  default route → {dev}")
     except Exception:
         pass
-    print()
+    say()
 
 
 def start_live_capture(agg, iface):
@@ -1171,13 +1201,44 @@ async def tick_loop(app):
             clients.discard(ws)
 
 
+async def shutdown_watch(app):
+    """Stop the server when the UI window goes away, so the hidden backend doesn't
+    outlive it. Once a client has connected, quit shortly after they all leave
+    (window closed). If a client never connects at all, quit after a longer grace
+    so a failed UI launch doesn't strand an invisible process."""
+    clients = app["clients"]
+    start = time.monotonic()
+    seen = False
+    gone_at = None
+    while True:
+        await asyncio.sleep(0.5)
+        if clients:
+            seen, gone_at = True, None
+            continue
+        now = time.monotonic()
+        if not seen:
+            if now - start >= STARTUP_GRACE:
+                log.warning("UI never connected — exiting so no hidden process is left behind")
+                asyncio.get_running_loop().stop()
+                return
+            continue
+        if gone_at is None:
+            gone_at = now
+        elif now - gone_at >= IDLE_GRACE:
+            log.info("UI closed — shutting down")
+            asyncio.get_running_loop().stop()
+            return
+
+
 async def on_startup(app):
     if app["mode"] == "replay":
         app["replay_task"] = asyncio.create_task(replay_loop(app))
-        return
-    app["tick_task"] = asyncio.create_task(tick_loop(app))
-    if app["mode"] == "demo":
-        app["demo_task"] = asyncio.create_task(run_demo(app["agg"]))
+    else:
+        app["tick_task"] = asyncio.create_task(tick_loop(app))
+        if app["mode"] == "demo":
+            app["demo_task"] = asyncio.create_task(run_demo(app["agg"]))
+    if app.get("exit_on_idle"):
+        app["shutdown_task"] = asyncio.create_task(shutdown_watch(app))
 
 
 async def on_cleanup(app):
@@ -1225,7 +1286,42 @@ def open_app(url, port):
         webbrowser.open(url)
 
 
+def _attach_console():
+    """The frozen build is windowed (no console) so it runs hidden from a shortcut.
+    When it's instead launched from a terminal, reattach to that console so CLI
+    output (--list-ifaces, --verbose, the banner, errors) is visible there."""
+    if sys.stdout is not None or not (getattr(sys, "frozen", False) and sys.platform == "win32"):
+        return
+    try:
+        import ctypes
+        if ctypes.windll.kernel32.AttachConsole(-1):   # ATTACH_PARENT_PROCESS
+            sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+            sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+
+def _setup_logging(verbose):
+    """Log to the console when there is one; always also log to a file under the
+    data dir, so the hidden windowed build still leaves diagnostics behind."""
+    handlers = []
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    try:
+        _DATA.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(_DATA / "orbit.log", encoding="utf-8"))
+    except OSError:
+        pass
+    if not handlers:                      # no console and no writable log file
+        handlers.append(logging.NullHandler())
+    logging.basicConfig(level=logging.WARNING, handlers=handlers,
+                        format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    if verbose:
+        log.setLevel(logging.DEBUG)   # Orbit's own diagnostics only, not asyncio/aiohttp internals
+
+
 def main():
+    _attach_console()
     ap = argparse.ArgumentParser(description="Orbit network observatory agent")
     ap.add_argument("--demo", action="store_true",
                     help="synthetic traffic, no capture (no Npcap/admin needed)")
@@ -1244,10 +1340,7 @@ def main():
                     help="debug logging to stderr (diagnose why GeoIP/process-names/DNS are off)")
     args = ap.parse_args()
 
-    logging.basicConfig(level=logging.WARNING,
-                        format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    if args.verbose:
-        log.setLevel(logging.DEBUG)   # Orbit's own diagnostics only, not asyncio/aiohttp internals
+    _setup_logging(args.verbose)
 
     if args.list_ifaces:
         list_ifaces()
@@ -1261,7 +1354,7 @@ def main():
 
     if mode == "replay":
         if not os.path.exists(args.replay):
-            print(f"\n  [!] replay file not found: {args.replay}\n")
+            alert("Orbit", f"Replay file not found:\n{args.replay}")
             sys.exit(1)
         iface = os.path.basename(args.replay)
     else:
@@ -1272,10 +1365,11 @@ def main():
                 capture = start_live_capture(agg, args.iface)
                 iface = capture["label"]
             except Exception as e:
-                print(f"\n  [!] capture failed to start: {e}")
-                print("      Check that Npcap is installed and you ran as administrator.")
-                print("      Npcap: https://npcap.com  (enable 'WinPcap API-compatible mode' on install)")
-                print("      To preview the UI without capture: python orbit_agent.py --demo\n")
+                alert("Orbit — capture could not start",
+                      f"Live capture failed to start: {e}\n\n"
+                      "Check that Npcap is installed and that you ran Orbit as administrator.\n"
+                      "Npcap: https://npcap.com  (enable 'WinPcap API-compatible mode' on install)\n\n"
+                      "To preview the UI without capture, launch 'Orbit (Demo)'.")
                 sys.exit(1)
 
     recorder = None
@@ -1283,9 +1377,9 @@ def main():
         path = args.record or f"orbit-{mode}-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"
         try:
             recorder = TickRecorder(path, mode, iface)
-            print(f"  ◉ recording → {path}")
+            say(f"  ◉ recording → {path}")
         except OSError as e:
-            print(f"  [!] could not open recording file: {e}")
+            say(f"  [!] could not open recording file: {e}")
 
     app = web.Application(middlewares=[no_cache])
     app["agg"] = agg
@@ -1299,6 +1393,9 @@ def main():
     app["loop"] = args.loop
     app["replay_restart"] = False
     app["port"] = args.port
+    # opened our own UI window? then die when it goes away (hidden backend must not
+    # outlive its window). --no-browser is the headless/recording case -> stay up.
+    app["exit_on_idle"] = not args.no_browser
     app.router.add_get("/", index_handler)
     app.router.add_get("/ws", ws_handler)
     app.router.add_static("/", WEB_DIR)
@@ -1306,25 +1403,25 @@ def main():
     app.on_cleanup.append(on_cleanup)
 
     url = f"http://localhost:{args.port}"
-    print(f"\n  ◉ Orbit  —  {mode.upper()} mode")
+    say(f"\n  ◉ Orbit  —  {mode.upper()} mode")
     if mode == "live":
-        print(f"    capturing on: {iface}   (other adapter: --iface \"<name>\", list: --list-ifaces)")
-    print(f"    {url}\n", flush=True)
+        say(f"    capturing on: {iface}   (other adapter: --iface \"<name>\", list: --list-ifaces)")
+    say(f"    {url}\n", flush=True)
     if not args.no_browser:
         threading.Timer(0.8, lambda: open_app(url, args.port)).start()
     try:
         web.run_app(app, host="127.0.0.1", port=args.port, print=None)
     except OSError as e:
-        # most commonly the port is already taken by another Orbit instance —
-        # say so instead of flashing a console that closes on the traceback
-        print(f"\n  [!] could not start on port {args.port}: {e}")
-        print("      Another Orbit may already be running — close it, or use --port <N>.")
-        if getattr(sys, "frozen", False):
-            try:
-                input("\n  Press Enter to close…")
-            except EOFError:
-                pass
+        # most commonly the port is already taken by another Orbit instance
+        alert("Orbit — could not start",
+              f"Could not start on port {args.port}: {e}\n\n"
+              "Another Orbit may already be running — close it, or use --port <N>.")
         sys.exit(1)
+    # run_app returned: the UI window closed (shutdown_watch stopped the loop) or
+    # Ctrl+C. The backend is hidden, so force the process down rather than risk a
+    # lingering sniffer/process-map thread keeping an invisible orbit.exe alive.
+    # on_cleanup already ran inside run_app, so the recorder is flushed.
+    os._exit(0)
 
 
 if __name__ == "__main__":

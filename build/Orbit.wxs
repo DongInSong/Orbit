@@ -39,7 +39,7 @@
          version over a newer one is refused with a clear message. -->
     <MajorUpgrade AllowSameVersionUpgrades="yes"
                   Schedule="afterInstallValidate"
-                  DowngradeErrorMessage="A newer version of Orbit is already installed. Uninstall it first (Settings &#8594; Apps) if you really want this older version." />
+                  DowngradeErrorMessage="A newer version of Orbit is already installed. Uninstall it first (Settings > Apps) if you really want this older version." />
     <MediaTemplate EmbedCab="yes" />
 
     <!-- x64-only build: fail fast with a clear message on 32-bit Windows instead of

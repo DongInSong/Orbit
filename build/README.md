@@ -43,9 +43,10 @@ and **Orbit (Demo)** (synthetic traffic, no admin/Npcap).
 
 > **Upgrades & reinstalls are automatic.** Installing any build — newer *or the same
 > version* — cleanly removes the previous one first, so you never get duplicate
-> entries, and a running Orbit is closed for you during the swap. Installing an
-> *older* version over a newer one is refused (uninstall first if you really need to).
-> The installer also requires 64-bit Windows and stops with a clear message otherwise.
+> entries. Close Orbit before reinstalling (or Windows will ask you to if its files
+> are in use). Installing an *older* version over a newer one is refused (uninstall
+> first if you really need to). The installer also requires 64-bit Windows and stops
+> with a clear message otherwise.
 
 ## Uninstall (clean)
 

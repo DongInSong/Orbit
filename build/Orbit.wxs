@@ -14,9 +14,9 @@
 
   Already installed? A MajorUpgrade (shared UpgradeCode) cleanly removes any prior
   build first — including the SAME version (AllowSameVersionUpgrades), so reinstalls
-  never duplicate the Add/Remove Programs entry; a running Orbit is closed first so
-  files aren't locked. Downgrades are refused. The ARP entry carries the app icon and
-  links back to the project.
+  never duplicate the Add/Remove Programs entry. Downgrades are refused. If Orbit is
+  running, Windows Installer's built-in files-in-use prompt asks the user to close it.
+  The ARP entry carries the app icon and links back to the project.
 
   Npcap is NOT bundled (its free license forbids redistribution and it is a
   kernel driver); demo/replay need none, live capture guides to npcap.com.
@@ -46,11 +46,6 @@
          Windows Installer's cryptic error 1633 ("not supported on this platform"). -->
     <Launch Condition="VersionNT64"
             Message="Orbit is 64-bit and requires 64-bit Windows." />
-
-    <!-- Close a running Orbit before an upgrade/uninstall so its files aren't locked
-         — avoids the "files in use" / reboot prompt during the remove-then-reinstall. -->
-    <util:CloseApplication Id="CloseOrbit" Target="orbit.exe"
-                           CloseMessage="yes" RebootPrompt="no" />
 
     <!-- Add/Remove Programs polish: the app's own icon, About/Help links to the
          project, and the resolved install path. (WixUI_InstallDir already sets

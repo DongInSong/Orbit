@@ -7,6 +7,11 @@ Serves the frontend itself: run this, open http://localhost:8420, done.
 
 Live mode never sends a single packet to the network — capture is
 copy-only, DNS names come from passively observed responses.
+
+Live capture follows the network: on Windows it watches for address/route
+changes (event-driven, zero CPU while idle) and auto-switches the capture
+interface when the default route moves — e.g. Wi-Fi -> Ethernet — without a
+restart. Pinning --iface opts out.
 """
 
 import argparse
@@ -739,11 +744,13 @@ def start_live_capture(agg, iface):
     except ImportError:
         pass
 
-    iface = _resolve_iface(iface)
-    local = local_ip_set()
+    pinned = iface                  # explicit --iface: capture there, never auto-follow
+    lref = [local_ip_set()]         # local-IP set behind a holder so the watcher can
+                                    # swap it atomically without racing the handler
     procmap = ProcessMap().start()
 
     def handle(pkt):
+        local = lref[0]
         if IP in pkt:
             src, dst, size = pkt[IP].src, pkt[IP].dst, len(pkt)
         elif IPv6 in pkt:
@@ -802,10 +809,68 @@ def start_live_capture(agg, iface):
             except Exception:
                 log.debug("DNS answer parse failed", exc_info=True)
 
-    sniffer = AsyncSniffer(prn=handle, store=False, filter="ip or ip6",
-                           iface=iface or None)
-    sniffer.start()
-    return _iface_label(iface)    # friendly name of the interface being captured
+    def spawn(dev):
+        s = AsyncSniffer(prn=handle, store=False, filter="ip or ip6", iface=dev or None)
+        s.start()
+        return s
+
+    dev = _resolve_iface(iface)
+    cap = {"dev": dev, "sniffer": spawn(dev), "label": _iface_label(dev),
+           "generation": 0}        # generation bumps on every interface switch
+
+    # Follow the network. When Windows reports an address or route change, re-resolve
+    # the default-route interface and — if it moved (e.g. Wi-Fi -> Ethernet) — restart
+    # the sniffer there; always refresh the local-IP set so up/down direction stays
+    # correct after a new DHCP lease. This is event-driven, NOT polling:
+    # NotifyAddrChange / NotifyRouteChange block inside the kernel and consume zero
+    # CPU until something actually changes. Skipped when --iface pins an interface,
+    # and a no-op off Windows (live capture still works, it just won't auto-follow).
+    if pinned is None and sys.platform == "win32":
+        lock = threading.Lock()
+
+        def reapply():
+            from scapy.all import conf
+            with lock:
+                try:
+                    conf.ifaces.reload()      # refresh scapy's adapter + routing view,
+                    conf.route.resync()       # else _resolve_iface sees the stale table
+                except Exception:
+                    log.debug("scapy network resync failed", exc_info=True)
+                lref[0] = local_ip_set()      # atomic swap; handler sees it next packet
+                new_dev = _resolve_iface(None)
+                if not new_dev or new_dev == cap["dev"]:
+                    return                    # IP refreshed; interface unchanged
+                try:
+                    fresh = spawn(new_dev)    # bind new before dropping old: no gap
+                except Exception as e:
+                    log.warning("could not follow to interface %r: %s", new_dev, e)
+                    return
+                old = cap["sniffer"]
+                cap["sniffer"], cap["dev"] = fresh, new_dev
+                cap["label"] = _iface_label(new_dev)
+                cap["generation"] += 1        # tick_loop picks this up -> tells the UI
+                log.info("capture interface changed -> %s", cap["label"])
+                try:
+                    old.stop()
+                except Exception:
+                    log.debug("stopping previous sniffer failed", exc_info=True)
+
+        def watch(fn_name):
+            import ctypes
+            try:
+                fn = getattr(ctypes.windll.iphlpapi, fn_name)
+            except (OSError, AttributeError):
+                return
+            while True:
+                if fn(None, None) != 0:       # NO_ERROR == 0; on error stop (no busy loop)
+                    return
+                reapply()
+
+        for fn_name in ("NotifyAddrChange", "NotifyRouteChange"):
+            threading.Thread(target=watch, args=(fn_name,),
+                             name=f"orbit-{fn_name}", daemon=True).start()
+
+    return cap                    # main reads cap["label"]; tick_loop watches cap["generation"]
 
 
 # ----------------------------------------------------------------- demo mode
@@ -1069,8 +1134,22 @@ async def replay_loop(app):
 async def tick_loop(app):
     agg, clients, geo = app["agg"], app["clients"], app["geo"]
     rec = app["recorder"]
+    cap = app["capture"]
+    last_gen = cap["generation"] if cap else 0
     while True:
         await asyncio.sleep(TICK_SEC)
+        # interface auto-followed to a new adapter (Wi-Fi -> Ethernet, …): re-badge
+        # so a fresh viewer's hello is right, and tell the live ones immediately.
+        if cap is not None and cap["generation"] != last_gen:
+            last_gen = cap["generation"]
+            app["iface"] = cap["label"]
+            note = json.dumps({"type": "iface", "iface": cap["label"]},
+                              separators=(",", ":"))
+            for ws in list(clients):
+                try:
+                    await ws.send_str(note)
+                except (ConnectionResetError, RuntimeError):
+                    clients.discard(ws)
         if not clients and rec is None:
             agg.snapshot()  # keep windows bounded even with no viewers
             continue
@@ -1178,6 +1257,7 @@ def main():
     # demo lowers the dark-traffic bar so the alert shows up within ~20s
     agg = Aggregator(dark_threshold=1_500_000 if args.demo else DARK_BYTES)
     geo = None
+    capture = None
 
     if mode == "replay":
         if not os.path.exists(args.replay):
@@ -1189,7 +1269,8 @@ def main():
         geo = GeoDB().start()        # offline GeoIP/ASN; downloads once if needed
         if mode == "live":
             try:
-                iface = str(start_live_capture(agg, args.iface) or args.iface or "default")
+                capture = start_live_capture(agg, args.iface)
+                iface = capture["label"]
             except Exception as e:
                 print(f"\n  [!] capture failed to start: {e}")
                 print("      Check that Npcap is installed and you ran as administrator.")
@@ -1211,6 +1292,7 @@ def main():
     app["clients"] = set()
     app["mode"] = mode
     app["iface"] = iface
+    app["capture"] = capture
     app["geo"] = geo
     app["recorder"] = recorder
     app["replay"] = args.replay

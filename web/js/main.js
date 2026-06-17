@@ -96,6 +96,11 @@ function connect() {
       overlay.classList.add("hidden");
       return;
     }
+    if (msg.type === "iface") {           // capture auto-followed to a new adapter
+      state.iface = msg.iface;
+      $("iface-label").textContent = msg.iface;
+      return;
+    }
     if (scrub.replaying) {                // keep measuring (buffer + bg galaxy), display frozen
       measureLive(msg, e.data);
       chartDirty = true;

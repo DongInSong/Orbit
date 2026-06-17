@@ -34,8 +34,9 @@ targets Windows PowerShell 5.1+.)
 
 Double-click the MSI (or `msiexec /i dist\Orbit-0.1.0.msi`). Steps:
 Welcome → **License** (MIT) → **choose install folder** (default `C:\Program Files\Orbit`)
-→ confirm → install → **Finish** (a note explains Npcap is needed only for live capture
-and that you launch from the Start Menu).
+→ confirm → install → **Finish**. The Finish screen explains Npcap is needed only for
+live capture and offers a checkbox (ticked by default) that opens the Npcap download
+page in your browser when you click Finish.
 
 Per-machine install to Program Files + two Start-Menu shortcuts: **Orbit** (live capture)
 and **Orbit (Demo)** (synthetic traffic, no admin/Npcap).

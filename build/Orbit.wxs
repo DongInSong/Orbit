@@ -6,9 +6,11 @@
         -d Version=0.1.0 -d SourceDir=<abs path to dist\orbit> -d LicenseRtf=<abs path to license.rtf> -o dist\Orbit-0.1.0.msi
 
   Wizard (WixUI_InstallDir): Welcome -> License -> choose install folder ->
-  Verify -> Progress -> Finish (with an Npcap/launch note). Installs perMachine
-  64-bit to C:\Program Files\Orbit. Uninstall removes the app, the Start-Menu
-  shortcuts, and the runtime GeoIP cache in %LOCALAPPDATA%\Orbit.
+  Verify -> Progress -> Finish. The Finish screen carries an Npcap/launch note
+  and a checkbox (ticked by default) that opens the Npcap download page in the
+  browser when the user clicks Finish. Installs perMachine 64-bit to
+  C:\Program Files\Orbit. Uninstall removes the app, the Start-Menu shortcuts,
+  and the runtime GeoIP cache in %LOCALAPPDATA%\Orbit.
 
   Npcap is NOT bundled (its free license forbids redistribution and it is a
   kernel driver); demo/replay need none, live capture guides to npcap.com.
@@ -31,7 +33,25 @@
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALTEXT"
-              Value="Demo and Replay work right away (no admin needed). Live capture additionally needs Npcap (https://npcap.com) and administrator rights. Launch from the Start Menu: 'Orbit' (live) or 'Orbit (Demo)'." />
+              Value="Demo and Replay work right away (no admin needed). Live capture additionally needs Npcap and administrator rights. Tick the box below to open the Npcap download page. Launch from the Start Menu: 'Orbit' (live) or 'Orbit (Demo)'." />
+
+    <!-- Finish-screen checkbox: open the Npcap download page so users can grab
+         the live-capture driver right after install. The WixUI ExitDialog has a
+         built-in optional checkbox; we label it, tick it by default, and wire
+         Finish to a WixShellExec on the URL (ShellExecute on an http target =
+         open the default browser). BinaryRef is the x64 Util CA to match -arch
+         x64. Condition skips it on repair/uninstall (only NOT Installed). -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+              Value="Open the Npcap download page (required for live capture)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <Property Id="WixShellExecTarget" Value="https://npcap.com/#download" />
+    <CustomAction Id="LaunchNpcapDownload" DllEntry="WixShellExec"
+                  Impersonate="yes" BinaryRef="Wix4UtilCA_X64" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction"
+               Value="LaunchNpcapDownload"
+               Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
 
     <!-- C:\Program Files\Orbit  (64-bit; build with -arch x64) -->
     <StandardDirectory Id="ProgramFiles64Folder">

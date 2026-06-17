@@ -92,6 +92,8 @@ driver. The MSI installs the app only:
 
 - GeoIP/ASN is downloaded once on first run into `%LOCALAPPDATA%\Orbit\.geoip`
   (writable; the install dir is read-only). Offline → enrichment simply stays off.
-- `build\orbit.ico` is optional; drop one in to brand the exe/shortcuts.
+- `build\orbit.ico` brands the exe, Start-Menu shortcuts and the Add/Remove Programs
+  entry. It's generated from the in-app mark by `python build\make_icon.py` (Pillow);
+  re-run that after tweaking, or drop in your own `orbit.ico` to override.
 - Bump the version via `-Version`; the `UpgradeCode` GUID in `Orbit.wxs` is fixed so
   upgrades replace the prior install.

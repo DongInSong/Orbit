@@ -53,13 +53,12 @@
                            CloseMessage="yes" RebootPrompt="no" />
 
     <!-- Add/Remove Programs polish: the app's own icon, About/Help links to the
-         project, the resolved install path, and no pointless "Modify" entry (Orbit
-         is a single feature — Repair and Uninstall still work). -->
+         project, and the resolved install path. (WixUI_InstallDir already sets
+         ARPNOMODIFY, so there's no pointless "Modify" entry; Repair/Uninstall work.) -->
     <Icon Id="OrbitIcon.exe" SourceFile="$(var.SourceDir)\orbit.exe" />
     <Property Id="ARPPRODUCTICON" Value="OrbitIcon.exe" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/DongInSong/Orbit" />
     <Property Id="ARPHELPLINK" Value="https://github.com/DongInSong/Orbit" />
-    <Property Id="ARPNOMODIFY" Value="1" />
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
 
     <!-- install wizard: Welcome -> License -> choose folder -> Verify -> Finish -->

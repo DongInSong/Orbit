@@ -12,6 +12,12 @@
   C:\Program Files\Orbit. Uninstall removes the app, the Start-Menu shortcuts,
   and the runtime GeoIP cache in %LOCALAPPDATA%\Orbit.
 
+  Already installed? A MajorUpgrade (shared UpgradeCode) cleanly removes any prior
+  build first — including the SAME version (AllowSameVersionUpgrades), so reinstalls
+  never duplicate the Add/Remove Programs entry; a running Orbit is closed first so
+  files aren't locked. Downgrades are refused. The ARP entry carries the app icon and
+  links back to the project.
+
   Npcap is NOT bundled (its free license forbids redistribution and it is a
   kernel driver); demo/replay need none, live capture guides to npcap.com.
 -->
@@ -25,8 +31,36 @@
            Scope="perMachine"
            Compressed="yes">
 
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Orbit is already installed." />
+    <!-- Already installed? Detected via the shared UpgradeCode. afterInstallValidate
+         removes the old build BEFORE laying down the new one (a clean remove-then-
+         reinstall). AllowSameVersionUpgrades closes the gap where reinstalling the
+         SAME version (a fresh build carries a new auto-generated ProductCode) would
+         otherwise leave two Orbit entries in Add/Remove Programs. Installing an OLDER
+         version over a newer one is refused with a clear message. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  Schedule="afterInstallValidate"
+                  DowngradeErrorMessage="A newer version of Orbit is already installed. Uninstall it first (Settings &#8594; Apps) if you really want this older version." />
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- x64-only build: fail fast with a clear message on 32-bit Windows instead of
+         Windows Installer's cryptic error 1633 ("not supported on this platform"). -->
+    <Launch Condition="VersionNT64"
+            Message="Orbit is 64-bit and requires 64-bit Windows." />
+
+    <!-- Close a running Orbit before an upgrade/uninstall so its files aren't locked
+         — avoids the "files in use" / reboot prompt during the remove-then-reinstall. -->
+    <util:CloseApplication Id="CloseOrbit" Target="orbit.exe"
+                           CloseMessage="yes" RebootPrompt="no" />
+
+    <!-- Add/Remove Programs polish: the app's own icon, About/Help links to the
+         project, the resolved install path, and no pointless "Modify" entry (Orbit
+         is a single feature — Repair and Uninstall still work). -->
+    <Icon Id="OrbitIcon.exe" SourceFile="$(var.SourceDir)\orbit.exe" />
+    <Property Id="ARPPRODUCTICON" Value="OrbitIcon.exe" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/DongInSong/Orbit" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/DongInSong/Orbit" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
 
     <!-- install wizard: Welcome -> License -> choose folder -> Verify -> Finish -->
     <ui:WixUI Id="WixUI_InstallDir" />

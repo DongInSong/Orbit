@@ -41,8 +41,11 @@ page in your browser when you click Finish.
 Per-machine install to Program Files + two Start-Menu shortcuts: **Orbit** (live capture)
 and **Orbit (Demo)** (synthetic traffic, no admin/Npcap).
 
-> Installed an earlier/broken build? **Uninstall it first** (Settings → Apps) so you
-> don't end up with duplicate entries.
+> **Upgrades & reinstalls are automatic.** Installing any build — newer *or the same
+> version* — cleanly removes the previous one first, so you never get duplicate
+> entries, and a running Orbit is closed for you during the swap. Installing an
+> *older* version over a newer one is refused (uninstall first if you really need to).
+> The installer also requires 64-bit Windows and stops with a clear message otherwise.
 
 ## Uninstall (clean)
 

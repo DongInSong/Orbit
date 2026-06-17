@@ -30,7 +30,17 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".deps"))
+# Resource roots. Frozen by PyInstaller → bundled data lives under _MEIPASS and
+# the dev repo layout (parent.parent) no longer holds; the GeoIP cache must also
+# go somewhere writable (Program Files is not), so it lands in %LOCALAPPDATA%.
+if getattr(sys, "frozen", False):
+    _BASE = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    _DATA = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Orbit"
+else:
+    _BASE = Path(__file__).resolve().parent.parent
+    _DATA = _BASE
+
+sys.path.insert(0, str(_BASE / ".deps"))   # dev: pip --target .deps (bundled when frozen)
 
 # Windows + redirected output falls back to cp949, which can't encode the
 # banner glyphs — force UTF-8 so printing never crashes the agent
@@ -44,7 +54,7 @@ log = logging.getLogger("orbit")    # quiet by default; --verbose flips to DEBUG
 
 TICK_SEC = 0.1
 DEFAULT_PORT = 8420
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+WEB_DIR = _BASE / "web"
 CONN_TTL = 60.0          # a (ip, port, proto) seen again after this counts as "new"
 TOP_HOSTS_PER_TICK = 30
 
@@ -64,7 +74,7 @@ LOSS_MIN_SEG = 40        # need this many outbound data segments before trusting
 LOSS_COOLDOWN = 30.0
 
 # ----------------------------------------------------------------------- geoip
-GEO_DIR = Path(__file__).resolve().parent.parent / ".geoip"
+GEO_DIR = _DATA / ".geoip"
 GEO_MAX_AGE = 40 * 86400       # re-download a cached build once it is older
 GEO_CACHE_MAX = 50000
 GEO_MAX_BYTES = 256 * 1024 * 1024   # decompressed DB ceiling — gzip-bomb guard
@@ -1220,7 +1230,19 @@ def main():
     print(f"    {url}\n", flush=True)
     if not args.no_browser:
         threading.Timer(0.8, lambda: open_app(url, args.port)).start()
-    web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+    try:
+        web.run_app(app, host="127.0.0.1", port=args.port, print=None)
+    except OSError as e:
+        # most commonly the port is already taken by another Orbit instance —
+        # say so instead of flashing a console that closes on the traceback
+        print(f"\n  [!] could not start on port {args.port}: {e}")
+        print("      Another Orbit may already be running — close it, or use --port <N>.")
+        if getattr(sys, "frozen", False):
+            try:
+                input("\n  Press Enter to close…")
+            except EOFError:
+                pass
+        sys.exit(1)
 
 
 if __name__ == "__main__":

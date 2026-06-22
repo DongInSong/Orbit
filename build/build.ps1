@@ -61,8 +61,17 @@ function Sign-File($path) {
     if ($LASTEXITCODE -ne 0) { throw "signtool failed on $path" }
   } else {
     $sig = Set-AuthenticodeSignature -FilePath $path -Certificate $script:cert -HashAlgorithm SHA256 -TimestampServer $TimestampUrl
-    # a self-signed (untrusted) cert reports UnknownError — the file is still signed
+    # a self-signed (untrusted) cert reports UnknownError — the file is still
+    # signed AS LONG AS a signer cert got embedded.
     if ($sig.Status -notin 'Valid', 'UnknownError') { throw "signing failed on $path : $($sig.Status) - $($sig.StatusMessage)" }
+    # But Windows PowerShell's Set-AuthenticodeSignature cannot sign .msi at all:
+    # it embeds nothing yet still returns the *input* cert in .SignerCertificate,
+    # so re-read the FILE (not $sig) to tell whether a signature actually landed.
+    # Warn loudly instead of silently shipping an unsigned MSI — real MSI signing
+    # needs signtool (the Windows SDK).
+    if ($null -eq (Get-AuthenticodeSignature $path).SignerCertificate) {
+      Write-Host "  WARN: $path is UNSIGNED — Set-AuthenticodeSignature can't sign this file type (MSI needs signtool / the Windows SDK). It will install but show 'Unknown publisher'." -ForegroundColor Red
+    }
   }
 }
 
@@ -96,23 +105,46 @@ Write-Host "`n[4/5] Signing orbit.exe..." -ForegroundColor Yellow
 Sign-File dist\orbit\orbit.exe
 
 Write-Host "`n[5/5] Building + signing the MSI..." -ForegroundColor Yellow
+# WiX writes the .msi through the Windows Installer service (msiserver), which
+# ships Manual/Stopped; WiX's implicit auto-start can fail with MSI 1631
+# ("service failed to start"), so nudge it up first. Needs admin (the build is
+# typically run elevated anyway).
+try {
+  if ((Get-Service msiserver -ErrorAction Stop).Status -ne 'Running') {
+    Start-Service msiserver
+    Write-Host "  started Windows Installer service (msiserver)"
+  }
+} catch { Write-Host "  WARN: could not start msiserver ($($_.Exception.Message)) — wix may fail with 1631" -ForegroundColor DarkYellow }
 $msi = "dist\Orbit-$Version.msi"
 # absolute SourceDir: the <Files Include> harvest glob is resolved relative to
-# the .wxs file (build\), NOT the working dir, so a relative path matches nothing
-$src = (Resolve-Path dist\orbit).Path
-$lic = (Resolve-Path build\license.rtf).Path
+# the .wxs file (build\), NOT the working dir, so a relative path matches nothing.
+# Use .ProviderPath (native FS path), not .Path — on a UNC working dir (e.g.
+# building the WSL repo from Windows via \\wsl.localhost\...) .Path returns a
+# provider-qualified "Microsoft.PowerShell.Core\FileSystem::\\..." string that
+# WiX treats as relative, mangling the harvest path.
+$src = (Resolve-Path dist\orbit).ProviderPath
+$lic = (Resolve-Path build\license.rtf).ProviderPath
 # the wizard + clean-uninstall need the UI and Util extensions, pinned to the
 # wix tool version (a newer extension won't load into wix 5.0.2)
 & $wix extension add -g WixToolset.UI.wixext/5.0.2
 & $wix extension add -g WixToolset.Util.wixext/5.0.2
 # call wix directly (not via Run): Run is an advanced function, so PowerShell
 # would try to bind wix's -d/-o as the function's own common parameters
-& $wix build build\Orbit.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -d Version=$Version -d SourceDir=$src -d LicenseRtf=$lic -o $msi
+# MsiOpenDatabase (the Windows Installer DB API WiX binds the .msi through)
+# CANNOT create the database on a UNC path — emitting straight to
+# \\wsl.localhost\...\dist fails with MSI 1631. So when SourceDir is UNC
+# (building the WSL repo from Windows), build to a local temp file, sign it
+# there, then copy the finished MSI back. A normal drive-letter checkout is
+# unaffected ($outMsi == $msi, no copy).
+$outMsi = if ($src -like '\\*') { Join-Path $env:TEMP "Orbit-$Version.msi" } else { $msi }
+Remove-Item $outMsi -ErrorAction SilentlyContinue
+& $wix build build\Orbit.wxs -arch x64 -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -d Version=$Version -d SourceDir=$src -d LicenseRtf=$lic -o $outMsi
 if ($LASTEXITCODE -ne 0) { throw "wix build failed (exit $LASTEXITCODE)" }
-if ((Get-Item $msi).Length -lt 1MB) {
-  throw "MSI is only $((Get-Item $msi).Length) bytes — the file harvest matched nothing. Check SourceDir / Orbit.wxs <Files Include>."
+if ((Get-Item $outMsi).Length -lt 1MB) {
+  throw "MSI is only $((Get-Item $outMsi).Length) bytes — the file harvest matched nothing. Check SourceDir / Orbit.wxs <Files Include>."
 }
-Sign-File $msi
+Sign-File $outMsi
+if ($outMsi -ne $msi) { Copy-Item $outMsi $msi -Force; Remove-Item $outMsi -ErrorAction SilentlyContinue }
 
 # ---- optional: trust the cert on THIS machine --------------------------
 if ($TrustCert) {

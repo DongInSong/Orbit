@@ -141,7 +141,9 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
 
   function drawParticles(dt) {
     tctx.globalCompositeOperation = "destination-out";
-    tctx.fillStyle = `rgba(0,0,0,${clamp(dt * 0.006, 0.05, 0.35)})`;
+    // higher per-frame erase alpha → the comet trail / afterimage behind each
+    // particle decays faster, so bursts leave a shorter, fainter streak
+    tctx.fillStyle = `rgba(0,0,0,${clamp(dt * 0.009, 0.07, 0.42)})`;
     tctx.fillRect(0, 0, W, H);
     tctx.globalCompositeOperation = "lighter";
 
@@ -155,11 +157,11 @@ export function initRadial(container, trailCanvas, nodeCanvas) {
       const y = u * u * p.y0 + 2 * u * p.t * p.cpy + p.t * p.t * p.y1;
       const fade = p.t < 0.12 ? p.t / 0.12 : p.t > 0.78 ? (1 - p.t) / 0.22 : 1;
       tctx.fillStyle = p.color;
-      tctx.globalAlpha = 0.09 * fade;
+      tctx.globalAlpha = 0.07 * fade;
       tctx.beginPath();
       tctx.arc(x, y, p.size * 2.2, 0, 7);
       tctx.fill();
-      tctx.globalAlpha = 0.55 * fade;
+      tctx.globalAlpha = 0.46 * fade;
       tctx.beginPath();
       tctx.arc(x, y, p.size, 0, 7);
       tctx.fill();
